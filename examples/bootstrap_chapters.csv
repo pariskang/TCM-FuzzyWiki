@@ -1,0 +1,6 @@
+source_id,book_name,volume_name,chapter_title,chapter_order,dynasty,author,text_original,text_type,topic_hint,school_tag,region_tag,tradition_id,text_family,citation_family,source_authority,text_integrity,semantic_clarity
+SRC_001,石氏伤科,卷一,论腰痛,1,清,石氏医家,"腰痛而冷，得温则缓，久病不愈。",医案,腰痛,骨伤派,江南医学传统,southern_traumatology,traumatology_text,shi_lineage,0.82,0.94,0.86
+SRC_002,伤寒论辑义,卷三,寒湿腰痛,2,清,经方医家,"腰冷痛，遇寒益甚，温之稍安。",条文,腰痛,"伤寒派;经方系统",北方传统,shanghan_tradition,classic_formula_text,zhang_zhongjing_lineage,0.88,0.90,0.82
+SRC_003,明清杂病论,卷二,久病腰痛,3,明,综合医家,"久病腰痛，腰膝酸软，脉弦。",医案,腰痛,明清综合医家,江南医学传统,mingqing_miscellaneous,miscellaneous_disease_text,mingqing_lineage,0.76,0.88,0.80
+SRC_004,骨伤经验集,卷四,瘀血腰痛,4,清,骨伤医家,"腰痛刺痛不移，夜间加重，久病不愈。",医案,腰痛,骨伤派,岭南医学传统,southern_traumatology,traumatology_text,trauma_lineage,0.78,0.86,0.82
+SRC_005,温病条辨摘义,卷一,湿热腰痛,5,清,温病医家,"腰痛兼苔黄腻，遇热烦甚。",条文,腰痛,温病派,江南医学传统,warm_disease_tradition,warm_disease_text,wu_jutong_lineage,0.84,0.89,0.83
