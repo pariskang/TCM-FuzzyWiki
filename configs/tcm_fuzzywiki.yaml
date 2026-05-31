@@ -1,0 +1,347 @@
+membership_calculation:
+  default_mode: overlap_integral
+  optional_modes: [three_point_mean, centroid_sampling]
+  numerical_integration:
+    method: trapezoidal
+    points: 200
+
+
+mamdani_sensitivity:
+  enabled: true
+  points: 200
+
+consequent_fuzzy_sets:
+  default: {points: [0.45, 0.70, 1.00, 1.00]}
+  syndrome: {points: [0.45, 0.70, 1.00, 1.00]}
+
+mapping_policy:
+  log_unmapped: true
+  trigger_review_if_confidence_above: 0.85
+  coverage_warning_threshold: 0.70
+
+uncertainty_propagation:
+  mode: montecarlo
+  n_samples: 200
+  n_samples_formal: 1000
+  apply_to: low_icc_only
+  icc_threshold: 0.75
+  vectorized: true
+  random_seed: 20260531
+
+
+aggregation:
+  source_rule_discount_gamma: 0.5
+  default_tradition_delta: 1.0
+  tradition_independence_weights:
+    shanghan_tradition: 1.0
+    southern_traumatology: 0.85
+    mingqing_miscellaneous: 0.85
+    warm_disease_tradition: 1.0
+
+candidate_pattern_filter:
+  min_support: 0.03
+  min_lift: 1.05
+  min_pmi: 0.05
+  min_source_count: 1
+  min_tradition_count: 1
+
+fuzzy_sets:
+  cold_property:
+    high: {points: [0.60, 0.78, 1.00, 1.00]}
+  warmth_relieves:
+    present: {points: [0.50, 0.70, 1.00, 1.00]}
+  kidney_related:
+    high: {points: [0.55, 0.72, 1.00, 1.00]}
+  musculoskeletal_location:
+    present: {points: [0.45, 0.65, 1.00, 1.00]}
+  chronicity:
+    high: {points: [0.55, 0.75, 1.00, 1.00]}
+  deficiency_property:
+    moderate: {points: [0.35, 0.50, 0.70, 0.85]}
+  blood_stasis_tendency:
+    moderate: {points: [0.35, 0.50, 0.72, 0.88]}
+  damp_heat_property:
+    high: {points: [0.62, 0.80, 1.00, 1.00]}
+  pain_fixed:
+    present: {points: [0.50, 0.70, 1.00, 1.00]}
+
+observation_mapping:
+  腰: pain_location:waist
+  腰痛: pain_location:waist
+  腰部: pain_location:waist
+  腰痛而冷: pain_quality:cold
+  痛而冷: pain_quality:cold
+  冷痛: pain_quality:cold
+  得温则缓: relieving_factor:warmth_relieves
+  温之稍安: relieving_factor:warmth_relieves
+  遇寒加重: aggravating_factor:cold_worsens
+  遇寒则甚: aggravating_factor:cold_worsens
+  久病: course:chronic
+  久病不愈: course:chronic
+  不愈: course:chronic
+  刺痛不移: pain_quality:stabbing_fixed
+  刺痛: pain_quality:stabbing_fixed
+  夜间加重: aggravating_factor:night_worse
+  苔黄腻: tongue:yellow_greasy
+  脉弦: pulse:wiry
+  腰膝酸软: symptom:waist_knee_soreness
+
+linguistic_values:
+  腰部:
+    feature: pain_location
+    maps_to:
+      kidney_related:
+        fuzzy_set: high
+        prior_membership: 0.72
+        status: bootstrap_prior
+        icc: 0.82
+      musculoskeletal_location:
+        fuzzy_set: present
+        prior_membership: 0.86
+        status: bootstrap_prior
+        icc: 0.80
+  冷痛:
+    feature: pain_quality
+    maps_to:
+      cold_property:
+        fuzzy_set: high
+        linguistic_set: {points: [0.70, 0.86, 1.00, 1.00]}
+        prior_membership: 0.85
+        status: bootstrap_prior
+        icc:
+        review_status: pending
+  得温则缓:
+    feature: relieving_factor
+    maps_to:
+      cold_property:
+        fuzzy_set: high
+        linguistic_set: {points: [0.64, 0.82, 1.00, 1.00]}
+        prior_membership: 0.82
+        status: bootstrap_prior
+        icc:
+      warmth_relieves:
+        fuzzy_set: present
+        prior_membership: 0.92
+        status: bootstrap_prior
+        icc: 0.86
+  久病:
+    feature: disease_course
+    maps_to:
+      chronicity:
+        fuzzy_set: high
+        prior_membership: 0.88
+        status: bootstrap_prior
+        icc: 0.81
+      deficiency_property:
+        fuzzy_set: moderate
+        prior_membership: 0.62
+        status: bootstrap_prior
+        icc: 0.68
+      blood_stasis_tendency:
+        fuzzy_set: moderate
+        prior_membership: 0.55
+        status: bootstrap_prior
+        icc: 0.66
+  刺痛不移:
+    feature: pain_quality
+    maps_to:
+      blood_stasis_tendency:
+        fuzzy_set: moderate
+        prior_membership: 0.82
+        status: bootstrap_prior
+        icc: 0.78
+      pain_fixed:
+        fuzzy_set: present
+        prior_membership: 0.88
+        status: bootstrap_prior
+        icc: 0.80
+  夜间加重:
+    feature: aggravating_factor
+    maps_to:
+      blood_stasis_tendency:
+        fuzzy_set: moderate
+        prior_membership: 0.64
+        status: bootstrap_prior
+        icc: 0.70
+  苔黄腻:
+    feature: tongue
+    maps_to:
+      damp_heat_property:
+        fuzzy_set: high
+        prior_membership: 0.86
+        status: bootstrap_prior
+        icc: 0.82
+  腰膝酸软:
+    feature: symptom
+    maps_to:
+      kidney_related:
+        fuzzy_set: high
+        prior_membership: 0.90
+        status: bootstrap_prior
+        icc: 0.84
+      deficiency_property:
+        fuzzy_set: moderate
+        prior_membership: 0.72
+        status: bootstrap_prior
+        icc: 0.78
+
+seed_rules:
+  - rule_id: RULE_0001
+    rule_name: 冷痛得温则缓提示寒湿痹阻
+    rule_origin: seed_rule
+    pattern_id: PATTERN_BOOTSTRAP_COLD_WARMTH
+    antecedents:
+      - variable: cold_property
+        fuzzy_set: high
+        threshold: 0.70
+        weight: 0.50
+      - variable: warmth_relieves
+        fuzzy_set: present
+        threshold: 0.60
+        weight: 0.30
+      - variable: musculoskeletal_location
+        fuzzy_set: present
+        threshold: 0.50
+        weight: 0.20
+    consequent:
+      entity: 寒湿痹阻
+      entity_type: syndrome
+    rule_weight: 0.84
+    support: 0.12
+    confidence: 0.74
+    lift: 2.36
+    pmi: 1.27
+    source_count: 7
+    book_count: 4
+    tradition_count: 3
+    source_diversity: 0.64
+    tradition_entropy: 0.52
+    applicable_context: 腰痛、痹证、筋骨疼痛
+    expert_acceptance_rate: 0.80
+    review_status: active_rule
+    created_from: bootstrap_prior
+    last_updated: '2026-05-31'
+  - rule_id: RULE_0002
+    rule_name: 久病腰部病变提示肾虚证
+    rule_origin: seed_rule
+    antecedents:
+      - variable: kidney_related
+        fuzzy_set: high
+        threshold: 0.70
+        weight: 0.50
+      - variable: chronicity
+        fuzzy_set: high
+        threshold: 0.60
+        weight: 0.30
+      - variable: deficiency_property
+        fuzzy_set: moderate
+        threshold: 0.50
+        weight: 0.20
+    consequent:
+      entity: 肾虚证
+      entity_type: syndrome
+    rule_weight: 0.82
+    support: 0.10
+    confidence: 0.68
+    lift: 1.92
+    pmi: 0.94
+    source_count: 6
+    book_count: 4
+    tradition_count: 3
+    source_diversity: 0.62
+    tradition_entropy: 0.58
+    applicable_context: 久病、腰膝酸软、虚损类文本
+    expert_acceptance_rate: 0.78
+    review_status: active_rule
+    created_from: bootstrap_prior
+    last_updated: '2026-05-31'
+  - rule_id: RULE_0003
+    rule_name: 久病刺痛夜甚提示瘀血阻络
+    rule_origin: seed_rule
+    antecedents:
+      - variable: chronicity
+        fuzzy_set: high
+        threshold: 0.60
+        weight: 0.35
+      - variable: blood_stasis_tendency
+        fuzzy_set: moderate
+        threshold: 0.50
+        weight: 0.45
+      - variable: pain_fixed
+        fuzzy_set: present
+        threshold: 0.50
+        weight: 0.20
+    consequent:
+      entity: 瘀血阻络
+      entity_type: syndrome
+    rule_weight: 0.78
+    support: 0.08
+    confidence: 0.61
+    lift: 1.85
+    pmi: 0.89
+    source_count: 5
+    book_count: 3
+    tradition_count: 2
+    source_diversity: 0.60
+    tradition_entropy: 0.50
+    applicable_context: 痛有定处、夜间加重、久病入络
+    expert_acceptance_rate: 0.76
+    review_status: active_rule
+    created_from: bootstrap_prior
+    last_updated: '2026-05-31'
+  - rule_id: RULE_0004
+    rule_name: 苔黄腻提示湿热下注
+    rule_origin: seed_rule
+    antecedents:
+      - variable: damp_heat_property
+        fuzzy_set: high
+        threshold: 0.70
+        weight: 1.00
+    consequent:
+      entity: 湿热下注
+      entity_type: syndrome
+    rule_weight: 0.76
+    support: 0.05
+    confidence: 0.56
+    lift: 1.70
+    pmi: 0.77
+    source_count: 4
+    book_count: 3
+    tradition_count: 2
+    source_diversity: 0.70
+    tradition_entropy: 0.60
+    applicable_context: 湿热、温病、下注类文本
+    expert_acceptance_rate: 0.74
+    review_status: active_rule
+    created_from: bootstrap_prior
+    last_updated: '2026-05-31'
+
+entities:
+  - entity_id: ENT_0001
+    entity_name: 腰痛
+    entity_type: 症状/病症
+    normalized_name: 腰痛
+    synonyms: 腰疼、腰脊痛、腰府痛
+    ancient_terms: 腰痛
+    modern_mapping: low back pain
+    parent_category: musculoskeletal symptom
+    definition: 以腰部疼痛为主要表现的症状或病症类实体。
+    review_status: bootstrap_prior
+  - entity_id: ENT_0002
+    entity_name: 肾虚证
+    entity_type: 证候
+    normalized_name: 肾虚证
+    synonyms: 肾气虚、肾精不足
+    modern_mapping: kidney deficiency pattern
+    parent_category: deficiency pattern
+    definition: 与肾相关虚损表现有关的证候谱系。
+    review_status: bootstrap_prior
+  - entity_id: ENT_0003
+    entity_name: 寒湿痹阻
+    entity_type: 证候
+    normalized_name: 寒湿痹阻
+    synonyms: 寒湿阻络、寒湿痹
+    modern_mapping: cold-damp obstruction pattern
+    parent_category: obstruction pattern
+    definition: 寒湿阻滞经络筋骨导致疼痛、冷痛、得温缓解等表现的证候。
+    review_status: bootstrap_prior
