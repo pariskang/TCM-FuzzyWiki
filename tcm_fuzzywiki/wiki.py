@@ -24,6 +24,7 @@ def generate_wiki(
     evaluation_rows: list[dict[str, Any]] | None = None,
     patterns: list[Any] | None = None,
     entities: list[dict[str, Any]] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     out = Path(out_dir)
     pages: list[dict[str, str]] = []
@@ -45,10 +46,19 @@ def generate_wiki(
         write_text(path, _rule_page(rule))
         pages.append({"page_type": "rule", "page_path": str(path)})
 
-    for pattern in patterns or []:
+    max_pattern_pages = int((config or {}).get("wiki_output", {}).get("max_candidate_pattern_pages", 1000))
+    for pattern in (patterns or [])[:max_pattern_pages]:
         path = out / "patterns" / f"{pattern.pattern_id}.md"
         write_text(path, _pattern_page(pattern))
         pages.append({"page_type": "pattern", "page_path": str(path)})
+    if patterns and len(patterns) > max_pattern_pages:
+        notice_path = out / "patterns" / "candidate_pattern_page_limit.md"
+        write_text(
+            notice_path,
+            f"# Candidate pattern page limit\n\nGenerated {max_pattern_pages} pattern pages out of {len(patterns)} candidate patterns. "
+            "All candidates remain available in `data/candidate_patterns.csv`.\n",
+        )
+        pages.append({"page_type": "pattern_limit_notice", "page_path": str(notice_path)})
 
     entity_lookup = _entity_lookup(entities or [])
     for entity in entities or []:
@@ -318,7 +328,9 @@ def _pattern_page(pattern: Any) -> str:
 | Confidence | {pattern.confidence:.3f} |
 | Lift | {pattern.lift:.3f} |
 | PMI | {pattern.pmi:.3f} |
+| Fisher p | {_format_optional_float(getattr(pattern, "fisher_p", None))} |
 | Jaccard | {pattern.jaccard:.3f} |
+| Size | {getattr(pattern, "size", len(pattern.observations))} |
 | Source count | {pattern.source_count} |
 | Book count | {pattern.book_count} |
 | Tradition count | {pattern.tradition_count} |
@@ -327,8 +339,10 @@ def _pattern_page(pattern: Any) -> str:
 
 ## 来源范围
 - Sources：{', '.join(pattern.source_ids)}
+- Source count summary：{getattr(pattern, "source_count_summary", "")}
 - Books：{', '.join(pattern.book_names)}
 - Traditions：{', '.join(pattern.tradition_ids)}
+- Mapping status summary：{getattr(pattern, "mapping_status_summary", {})}
 
 ## 代表证据
 {evidence_rows}
@@ -337,8 +351,18 @@ def _pattern_page(pattern: Any) -> str:
 {interpretation_rows}
 
 ## 专家审核状态
-{pattern.status}
+- Status：{pattern.status}
+- Review status：{getattr(pattern, "review_status", "pending")}
 """
+
+
+def _format_optional_float(value: Any) -> str:
+    if value is None:
+        return "unavailable"
+    try:
+        return f"{float(value):.6g}"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _observation_page(observation_key: str, observations: list[Observation], memberships: list[Membership]) -> str:

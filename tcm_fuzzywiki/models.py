@@ -99,6 +99,12 @@ class CandidatePattern:
     representative_evidence: list[str] = field(default_factory=list)
     possible_interpretation: list[str] = field(default_factory=list)
     status: str = "candidate_pattern"
+    itemset: list[str] = field(default_factory=list)
+    size: int = 0
+    fisher_p: float | None = None
+    source_count_summary: str = ""
+    mapping_status_summary: dict[str, dict[str, int]] = field(default_factory=dict)
+    review_status: str = "pending"
 
 
 @dataclass(slots=True)

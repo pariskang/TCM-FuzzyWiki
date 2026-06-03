@@ -39,11 +39,20 @@ aggregation:
     warm_disease_tradition: 1.0
 
 candidate_pattern_filter:
-  min_support: 0.03
-  min_lift: 1.05
-  min_pmi: 0.05
-  min_source_count: 1
-  min_tradition_count: 1
+  max_size: 3
+  min_support: 0.001
+  min_source_count: 20
+  min_tradition_count: 3
+  min_lift: 2.0
+  min_pmi: 1.0
+  fisher_p_max: 0.05
+  top_k_patterns: 1000
+  max_source_ids_per_pattern: 100
+  max_pair_candidates: 200000
+  max_join_candidates: 100000
+
+wiki_output:
+  max_candidate_pattern_pages: 1000
 
 fuzzy_sets:
   cold_property:
