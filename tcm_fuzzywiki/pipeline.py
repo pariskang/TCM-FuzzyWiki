@@ -50,7 +50,7 @@ def run_pipeline(
     network_nodes, network_edges = build_relation_network(observations, memberships, rules, inference_results, aggregations)
     entities = config.get("entities", [])
     evaluation_rows, evaluation_templates = evaluate_pipeline(memberships, inference_results, entities, gold_dir)
-    wiki_pages = generate_wiki(wiki_dir, sources, observations, memberships, inference_results, rules, aggregations, mamdani_results, evaluation_rows, patterns, entities)
+    wiki_pages = generate_wiki(wiki_dir, sources, observations, memberships, inference_results, rules, aggregations, mamdani_results, evaluation_rows, patterns, entities, config)
 
     source_metadata = [
         {
@@ -152,11 +152,16 @@ def _expert_review_template(patterns: list[Any]) -> list[dict[str, Any]]:
         {
             "pattern_id": pattern.pattern_id,
             "observations": list(pattern.observations),
+            "itemset": getattr(pattern, "itemset", list(pattern.observations)),
+            "size": getattr(pattern, "size", len(pattern.observations)),
             "support": pattern.support,
             "lift": pattern.lift,
             "pmi": pattern.pmi,
+            "fisher_p": getattr(pattern, "fisher_p", None),
             "possible_interpretation": pattern.possible_interpretation,
             "source_ids": pattern.source_ids,
+            "source_count_summary": getattr(pattern, "source_count_summary", ""),
+            "mapping_status_summary": getattr(pattern, "mapping_status_summary", {}),
             "book_names": pattern.book_names,
             "tradition_ids": pattern.tradition_ids,
             "representative_evidence": pattern.representative_evidence,
@@ -166,7 +171,7 @@ def _expert_review_template(patterns: list[Any]) -> list[dict[str, Any]]:
             "suggested_rule_weight": "",
             "applicable_context": "",
             "conflict_note": "",
-            "review_status": "pending",
+            "review_status": getattr(pattern, "review_status", "pending"),
         }
         for pattern in patterns
     ]

@@ -51,6 +51,7 @@ def validate_build(
     findings.extend(validate_config(config))
     findings.extend(validate_sources(sources))
     findings.extend(validate_observation_coverage(observations, memberships, summary))
+    findings.extend(validate_cooccurrence_readiness(summary))
     findings.extend(validate_rules(rules))
     findings.extend(validate_evaluation_readiness(evaluation_rows))
     findings.append(_overall_readiness(findings))
@@ -139,6 +140,21 @@ def validate_observation_coverage(
     if not findings:
         findings.append(_finding("coverage", "membership", "info", "coverage_ready", f"Membership coverage is {coverage:.3f}."))
     return findings
+
+
+def validate_cooccurrence_readiness(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    source_count = int(summary.get("source_count", 0) or 0)
+    if source_count < 30:
+        return [
+            _finding(
+                "cooccurrence",
+                "candidate_patterns",
+                "warning",
+                "exploratory_only_small_sample",
+                f"Only {source_count} sources are available; candidate patterns are exploratory_only and lift/PMI are unreliable for N<30.",
+            )
+        ]
+    return [_finding("cooccurrence", "candidate_patterns", "info", "cooccurrence_sample_ready", "Source count is adequate for configured co-occurrence filtering.")]
 
 
 def validate_rules(rules: list[FuzzyRule]) -> list[dict[str, Any]]:
