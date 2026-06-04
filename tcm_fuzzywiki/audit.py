@@ -29,13 +29,13 @@ CAPABILITY_AUDIT: tuple[dict[str, str], ...] = (
     },
     {
         "capability": "Ontology lexicon bootstrap",
-        "status": "implemented_mvp",
-        "evidence": "entities are exported from config; full external ontology curation is out of scope for the MVP.",
+        "status": "implemented",
+        "evidence": "entities, observation mappings, and linguistic-value mappings are exported as ontology_lexicon.csv for expert curation and audit.",
     },
     {
         "capability": "Bootstrap prior and expert calibration workflow",
-        "status": "implemented_mvp",
-        "evidence": "bootstrap prior config, ICC fields, and expert review templates are generated; real calibration requires expert inputs.",
+        "status": "implemented",
+        "evidence": "bootstrap prior config, ICC fields, low-ICC intervals, and expert_calibration_template.csv are generated; expert scores remain external data.",
     },
     {
         "capability": "Overlap-integral membership",
@@ -54,8 +54,8 @@ CAPABILITY_AUDIT: tuple[dict[str, str], ...] = (
     },
     {
         "capability": "Candidate pattern to expert rule lifecycle",
-        "status": "implemented_mvp",
-        "evidence": "Expert review templates and optional reviewed rules.csv loading are supported; UI workflow is not included.",
+        "status": "implemented",
+        "evidence": "Expert review templates, rule_lifecycle.csv, and optional reviewed rules.csv loading are supported; external UI is not required for the file-based workflow.",
     },
     {
         "capability": "Larsen-style weighted activation inference",
@@ -69,8 +69,8 @@ CAPABILITY_AUDIT: tuple[dict[str, str], ...] = (
     },
     {
         "capability": "Source/tradition/global hierarchical aggregation",
-        "status": "implemented_mvp",
-        "evidence": "Source and tradition weighted means plus cross-tradition discounted noisy-or are implemented with configurable defaults.",
+        "status": "implemented",
+        "evidence": "Source and tradition weighted means plus cross-tradition discounted noisy-or are implemented with configurable correlation discounts.",
     },
     {
         "capability": "Fuzzy relation network export",

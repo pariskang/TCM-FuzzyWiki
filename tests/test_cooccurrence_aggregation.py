@@ -33,3 +33,87 @@ def test_aggregation_records_tradition_delta_values():
     rows = aggregate(results, sources, rules, {"tradition_independence_weights": {"trad_b": 0.5}})
     global_row = next(row for row in rows if row["aggregation_level"] == "global")
     assert global_row["delta_values"] == [1.0, 0.5]
+
+
+def test_candidate_mining_does_not_prune_larger_itemsets_by_pair_lift():
+    sources = [SourceUnit(f"SRC_{idx:03d}", "Book", tradition_id="trad") for idx in range(100)]
+    observations = []
+    for idx, source in enumerate(sources):
+        items = ["item:dummy"]
+        if idx < 80:
+            items.extend(["item:a", "item:b"])
+        if idx < 20:
+            items.append("item:c")
+        for item_idx, item in enumerate(items):
+            observations.append(Observation(f"OBS_{idx}_{item_idx}", source.source_id, "item", item, item, 0.9, item, "mapped"))
+
+    patterns = mine_candidate_patterns(
+        observations,
+        sources,
+        {
+            "candidate_pattern_filter": {
+                "max_size": 3,
+                "min_support": 0.1,
+                "min_source_count": 10,
+                "min_tradition_count": 1,
+                "min_lift": 1.3,
+                "min_pmi": 0,
+            }
+        },
+    )
+
+    assert any(pattern.observations == ("item:a", "item:b", "item:c") for pattern in patterns)
+
+
+def test_candidate_pattern_source_ids_are_truncated_with_summary():
+    sources = [SourceUnit(f"SRC_{idx:03d}", "Book", tradition_id="trad") for idx in range(40)]
+    observations = []
+    for idx, source in enumerate(sources):
+        for item_idx, item in enumerate(["item:a", "item:b"]):
+            observations.append(Observation(f"OBS_{idx}_{item_idx}", source.source_id, "item", item, item, 0.9, item, "mapped"))
+
+    patterns = mine_candidate_patterns(
+        observations,
+        sources,
+        {
+            "candidate_pattern_filter": {
+                "min_support": 0.1,
+                "min_source_count": 10,
+                "min_tradition_count": 1,
+                "min_lift": 0.1,
+                "min_pmi": -10,
+                "max_source_ids_per_pattern": 5,
+            }
+        },
+    )
+
+    assert patterns
+    assert patterns[0].source_count == 40
+    assert len(patterns[0].source_ids) == 5
+    assert "source_ids_truncated_to=5" in patterns[0].source_count_summary
+
+
+def test_candidate_support_denominator_includes_sources_without_observations():
+    sources = [SourceUnit(f"SRC_{idx:03d}", "Book", tradition_id="trad") for idx in range(10)]
+    observations = []
+    for idx in range(5):
+        for item_idx, item in enumerate(["item:a", "item:b"]):
+            observations.append(Observation(f"OBS_{idx}_{item_idx}", f"SRC_{idx:03d}", "item", item, item, 0.9, item, "mapped"))
+
+    patterns = mine_candidate_patterns(
+        observations,
+        sources,
+        {
+            "candidate_pattern_filter": {
+                "min_support": 0.1,
+                "min_source_count": 1,
+                "min_tradition_count": 1,
+                "min_lift": 0.1,
+                "min_pmi": -10,
+            }
+        },
+    )
+
+    pair = next(pattern for pattern in patterns if pattern.observations == ("item:a", "item:b"))
+    assert pair.source_count == 5
+    assert pair.support == 0.5

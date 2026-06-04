@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ from .io import read_chapters, write_csv, write_json, write_text
 from .llmlite import AzureChatGPTConfig, AzureChatGPTLLM
 from .mamdani import run_mamdani_sensitivity
 from .membership import MembershipCalculator, coverage, unmapped_log
+from .methodology import methodology_markdown, methodology_rows
 from .network import build_relation_network
 from .provenance import build_manifest, manifest_markdown
 from .rules import load_rules
@@ -50,7 +52,7 @@ def run_pipeline(
     network_nodes, network_edges = build_relation_network(observations, memberships, rules, inference_results, aggregations)
     entities = config.get("entities", [])
     evaluation_rows, evaluation_templates = evaluate_pipeline(memberships, inference_results, entities, gold_dir)
-    wiki_pages = generate_wiki(wiki_dir, sources, observations, memberships, inference_results, rules, aggregations, mamdani_results, evaluation_rows, patterns, entities)
+    wiki_pages = generate_wiki(wiki_dir, sources, observations, memberships, inference_results, rules, aggregations, mamdani_results, evaluation_rows, patterns, entities, config)
 
     source_metadata = [
         {
@@ -89,6 +91,10 @@ def run_pipeline(
     write_csv(data_dir / "relation_edges.csv", network_edges)
     write_csv(data_dir / "evaluation_results.csv", evaluation_rows)
     write_csv(data_dir / "evaluation_gold_templates.csv", evaluation_templates)
+    write_csv(data_dir / "ontology_lexicon.csv", _ontology_lexicon_rows(config))
+    write_csv(data_dir / "expert_calibration_template.csv", _expert_calibration_template(observations, memberships, config))
+    write_csv(data_dir / "source_stratification.csv", _source_stratification_rows(sources))
+    write_csv(data_dir / "rule_lifecycle.csv", _rule_lifecycle_rows(patterns, rules))
 
     cov = coverage(observations, memberships)
     summary = {
@@ -117,6 +123,13 @@ def run_pipeline(
     summary["wiki_page_count"] = len(wiki_pages)
     write_csv(data_dir / "wiki_pages.csv", wiki_pages)
     write_text(out / "summary.txt", "\n".join(f"{key}={value}" for key, value in summary.items()) + "\n")
+    methodology_audit_rows = methodology_rows(summary)
+    write_csv(data_dir / "methodology_compliance.csv", methodology_audit_rows)
+    methodology_path = wiki_dir / "audit" / "methodology_compliance.md"
+    write_text(methodology_path, methodology_markdown(methodology_audit_rows))
+    wiki_pages.append({"page_type": "audit", "page_path": str(methodology_path)})
+    summary["wiki_page_count"] = len(wiki_pages)
+
     assessment_row, assessment_md = assess_output(out)
     write_csv(data_dir / "completion_assessment.csv", [assessment_row])
     assessment_path = wiki_dir / "audit" / "completion_assessment.md"
@@ -152,11 +165,23 @@ def _expert_review_template(patterns: list[Any]) -> list[dict[str, Any]]:
         {
             "pattern_id": pattern.pattern_id,
             "observations": list(pattern.observations),
+            "itemset": getattr(pattern, "itemset", list(pattern.observations)),
+            "size": getattr(pattern, "size", len(pattern.observations)),
             "support": pattern.support,
+            "confidence": getattr(pattern, "confidence", ""),
             "lift": pattern.lift,
             "pmi": pattern.pmi,
+            "fisher_p": getattr(pattern, "fisher_p", None),
+            "jaccard": getattr(pattern, "jaccard", ""),
+            "source_count": getattr(pattern, "source_count", ""),
+            "book_count": getattr(pattern, "book_count", ""),
+            "tradition_count": getattr(pattern, "tradition_count", ""),
+            "source_diversity": getattr(pattern, "source_diversity", ""),
+            "tradition_entropy": getattr(pattern, "tradition_entropy", ""),
             "possible_interpretation": pattern.possible_interpretation,
             "source_ids": pattern.source_ids,
+            "source_count_summary": getattr(pattern, "source_count_summary", ""),
+            "mapping_status_summary": getattr(pattern, "mapping_status_summary", {}),
             "book_names": pattern.book_names,
             "tradition_ids": pattern.tradition_ids,
             "representative_evidence": pattern.representative_evidence,
@@ -166,7 +191,7 @@ def _expert_review_template(patterns: list[Any]) -> list[dict[str, Any]]:
             "suggested_rule_weight": "",
             "applicable_context": "",
             "conflict_note": "",
-            "review_status": "pending",
+            "review_status": getattr(pattern, "review_status", "pending"),
         }
         for pattern in patterns
     ]
@@ -177,4 +202,120 @@ def _flatten_fuzzy_sets(fuzzy_sets: dict[str, Any]) -> list[dict[str, Any]]:
     for variable, sets in fuzzy_sets.items():
         for fuzzy_set, spec in sets.items():
             rows.append({"variable": variable, "fuzzy_set": fuzzy_set, "points": spec.get("points", spec) if isinstance(spec, dict) else spec})
+    return rows
+
+
+def _ontology_lexicon_rows(config: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for entity in config.get("entities", []):
+        row = dict(entity)
+        row["lexicon_section"] = "entity"
+        rows.append(row)
+    for raw, standard in config.get("observation_mapping", {}).items():
+        rows.append(
+            {
+                "lexicon_section": "observation_mapping",
+                "raw_term": raw,
+                "standard_observation": standard,
+                "review_status": "pending",
+            }
+        )
+    for term, entry in config.get("linguistic_values", {}).items():
+        maps_to = entry.get("maps_to", {}) if isinstance(entry, dict) else {}
+        for variable, mapping in maps_to.items():
+            rows.append(
+                {
+                    "lexicon_section": "linguistic_value",
+                    "raw_term": term,
+                    "feature": entry.get("feature", "") if isinstance(entry, dict) else "",
+                    "variable": variable,
+                    "fuzzy_set": mapping.get("fuzzy_set", "") if isinstance(mapping, dict) else "",
+                    "prior_membership": mapping.get("prior_membership", "") if isinstance(mapping, dict) else "",
+                    "status": mapping.get("status", entry.get("status", "bootstrap_prior")) if isinstance(mapping, dict) and isinstance(entry, dict) else "bootstrap_prior",
+                    "icc": mapping.get("icc", "") if isinstance(mapping, dict) else "",
+                    "review_status": mapping.get("review_status", entry.get("review_status", "pending")) if isinstance(mapping, dict) and isinstance(entry, dict) else "pending",
+                }
+            )
+    return rows
+
+
+def _expert_calibration_template(observations: list[Any], memberships: list[Any], config: dict[str, Any]) -> list[dict[str, Any]]:
+    obs_by_id = {obs.observation_id: obs for obs in observations}
+    rows: list[dict[str, Any]] = []
+    for mem in memberships:
+        obs = obs_by_id.get(mem.observation_id)
+        rows.append(
+            {
+                "calibration_id": f"CAL_{len(rows) + 1:06d}",
+                "source_id": mem.source_id,
+                "observation_id": mem.observation_id,
+                "feature": getattr(obs, "feature", ""),
+                "feature_value": getattr(obs, "feature_value", ""),
+                "standard_observation": mem.standard_observation,
+                "evidence_text": getattr(obs, "evidence_text", ""),
+                "variable": mem.variable,
+                "fuzzy_set": mem.fuzzy_set,
+                "model_membership": mem.membership,
+                "p5": mem.p5,
+                "p95": mem.p95,
+                "uncertainty_width": mem.uncertainty_width,
+                "calculation_mode": mem.calculation_mode,
+                "status": mem.status,
+                "icc": mem.icc,
+                "expert_accept_observation": "",
+                "expert_accept_mapping": "",
+                "expert_membership": "",
+                "expert_comment": "",
+            }
+        )
+    return rows
+
+
+def _source_stratification_rows(sources: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    dimensions = {
+        "topic_hint": lambda source: [source.topic_hint],
+        "tradition_id": lambda source: [source.tradition_id],
+        "text_family": lambda source: [source.text_family],
+        "citation_family": lambda source: [source.citation_family],
+        "text_type": lambda source: [source.text_type],
+        "school_tag": lambda source: source.school_tag,
+        "region_tag": lambda source: source.region_tag,
+    }
+    for dimension, extractor in dimensions.items():
+        counts: Counter[str] = Counter()
+        for source in sources:
+            for value in extractor(source):
+                counts[str(value or "uncertain")] += 1
+        for value, count in sorted(counts.items()):
+            rows.append({"dimension": dimension, "value": value, "source_count": count})
+    return rows
+
+
+def _rule_lifecycle_rows(patterns: list[Any], rules: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for pattern in patterns:
+        rows.append(
+            {
+                "artifact_id": pattern.pattern_id,
+                "artifact_type": "candidate_pattern",
+                "lifecycle_state": getattr(pattern, "review_status", "candidate_pattern"),
+                "created_from": "observation_itemset",
+                "next_expected_state": "expert_reviewed_pattern",
+                "source_count": getattr(pattern, "source_count", ""),
+                "support": getattr(pattern, "support", ""),
+            }
+        )
+    for rule in rules:
+        rows.append(
+            {
+                "artifact_id": rule.rule_id,
+                "artifact_type": "rule",
+                "lifecycle_state": rule.review_status,
+                "created_from": rule.created_from or rule.pattern_id or rule.rule_origin,
+                "next_expected_state": "active_rule" if rule.review_status in {"expert_verified", "expert_verified_rule"} else "expert_review_or_monitoring",
+                "source_count": rule.source_count,
+                "support": rule.support,
+            }
+        )
     return rows

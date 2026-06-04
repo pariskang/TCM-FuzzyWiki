@@ -24,6 +24,7 @@ def generate_wiki(
     evaluation_rows: list[dict[str, Any]] | None = None,
     patterns: list[Any] | None = None,
     entities: list[dict[str, Any]] | None = None,
+    config: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     out = Path(out_dir)
     pages: list[dict[str, str]] = []
@@ -45,10 +46,19 @@ def generate_wiki(
         write_text(path, _rule_page(rule))
         pages.append({"page_type": "rule", "page_path": str(path)})
 
-    for pattern in patterns or []:
+    max_pattern_pages = int((config or {}).get("wiki_output", {}).get("max_candidate_pattern_pages", 1000))
+    for pattern in (patterns or [])[:max_pattern_pages]:
         path = out / "patterns" / f"{pattern.pattern_id}.md"
         write_text(path, _pattern_page(pattern))
         pages.append({"page_type": "pattern", "page_path": str(path)})
+    if patterns and len(patterns) > max_pattern_pages:
+        notice_path = out / "patterns" / "candidate_pattern_page_limit.md"
+        write_text(
+            notice_path,
+            f"# Candidate pattern page limit\n\nGenerated {max_pattern_pages} pattern pages out of {len(patterns)} candidate patterns. "
+            "All candidates remain available in `data/candidate_patterns.csv`.\n",
+        )
+        pages.append({"page_type": "pattern_limit_notice", "page_path": str(notice_path)})
 
     entity_lookup = _entity_lookup(entities or [])
     for entity in entities or []:
@@ -66,11 +76,15 @@ def generate_wiki(
         write_text(path, _syndrome_page(conclusion, entity_lookup.get(conclusion), inference_results, aggregations, rules))
         pages.append({"page_type": "syndrome", "page_path": str(path)})
 
+    pattern_index = _patterns_by_observation(patterns or [])
+    rules_by_pattern = _rules_by_pattern_id(rules)
     for observation_key, rows in _group(observations, lambda obs: obs.standard_observation or obs.feature_value).items():
         safe_name = _safe_filename(observation_key)
         path = out / "observations" / f"{safe_name}.md"
         related = [mem for mem in memberships if mem.standard_observation == observation_key]
-        write_text(path, _observation_page(observation_key, rows, related))
+        related_patterns = pattern_index.get(observation_key, [])
+        related_rules = [rule for pattern in related_patterns for rule in rules_by_pattern.get(pattern.pattern_id, [])]
+        write_text(path, _observation_page(observation_key, rows, related, related_patterns, related_rules))
         pages.append({"page_type": "observation", "page_path": str(path)})
 
     for tradition_id, rows in _group(sources, lambda src: src.tradition_id).items():
@@ -102,6 +116,22 @@ def _group(items: list[Any], key_fn: Any) -> dict[str, list[Any]]:
     grouped: dict[str, list[Any]] = defaultdict(list)
     for item in items:
         grouped[str(key_fn(item))].append(item)
+    return dict(grouped)
+
+
+def _patterns_by_observation(patterns: list[Any]) -> dict[str, list[Any]]:
+    grouped: dict[str, list[Any]] = defaultdict(list)
+    for pattern in patterns:
+        for item in getattr(pattern, "observations", []):
+            grouped[str(item)].append(pattern)
+    return dict(grouped)
+
+
+def _rules_by_pattern_id(rules: list[FuzzyRule]) -> dict[str, list[FuzzyRule]]:
+    grouped: dict[str, list[FuzzyRule]] = defaultdict(list)
+    for rule in rules:
+        if rule.pattern_id:
+            grouped[rule.pattern_id].append(rule)
     return dict(grouped)
 
 
@@ -318,7 +348,9 @@ def _pattern_page(pattern: Any) -> str:
 | Confidence | {pattern.confidence:.3f} |
 | Lift | {pattern.lift:.3f} |
 | PMI | {pattern.pmi:.3f} |
+| Fisher p | {_format_optional_float(getattr(pattern, "fisher_p", None))} |
 | Jaccard | {pattern.jaccard:.3f} |
+| Size | {getattr(pattern, "size", len(pattern.observations))} |
 | Source count | {pattern.source_count} |
 | Book count | {pattern.book_count} |
 | Tradition count | {pattern.tradition_count} |
@@ -327,8 +359,10 @@ def _pattern_page(pattern: Any) -> str:
 
 ## 来源范围
 - Sources：{', '.join(pattern.source_ids)}
+- Source count summary：{getattr(pattern, "source_count_summary", "")}
 - Books：{', '.join(pattern.book_names)}
 - Traditions：{', '.join(pattern.tradition_ids)}
+- Mapping status summary：{getattr(pattern, "mapping_status_summary", {})}
 
 ## 代表证据
 {evidence_rows}
@@ -337,14 +371,38 @@ def _pattern_page(pattern: Any) -> str:
 {interpretation_rows}
 
 ## 专家审核状态
-{pattern.status}
+- Status：{pattern.status}
+- Review status：{getattr(pattern, "review_status", "pending")}
 """
 
 
-def _observation_page(observation_key: str, observations: list[Observation], memberships: list[Membership]) -> str:
+def _format_optional_float(value: Any) -> str:
+    if value is None:
+        return "unavailable"
+    try:
+        return f"{float(value):.6g}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _observation_page(
+    observation_key: str,
+    observations: list[Observation],
+    memberships: list[Membership],
+    patterns: list[Any] | None = None,
+    related_rules: list[FuzzyRule] | None = None,
+) -> str:
     mem_rows = "\n".join(
         sorted({f"| {mem.variable}.{mem.fuzzy_set} | {mem.membership:.2f} | {mem.status} |" for mem in memberships})
     ) or "| - | - | - |"
+    co_rows = "\n".join(
+        f"| [[{pattern.pattern_id}]] | {', '.join(item for item in pattern.observations if item != observation_key)} | {pattern.lift:.3f} | {pattern.pmi:.3f} | {pattern.source_count} |"
+        for pattern in sorted(patterns or [], key=lambda item: (item.lift, item.source_count), reverse=True)[:10]
+    ) or "| - | - | - | - | - |"
+    rule_rows = "\n".join(
+        f"- [[{rule.rule_id}]]：{rule.rule_name}（{rule.review_status}）"
+        for rule in related_rules or []
+    ) or "- 暂无"
     return f"""# {observation_key}
 
 ## 类型
@@ -354,6 +412,14 @@ Observation
 | Fuzzy variable | μ | 状态 |
 |---|---:|---|
 {mem_rows}
+
+## 高频共现
+| Pattern | 共现 observation | Lift | PMI | Sources |
+|---|---|---:|---:|---:|
+{co_rows}
+
+## 相关候选/正式规则
+{rule_rows}
 
 ## 证据计数
 - 出现次数：{len(observations)}
