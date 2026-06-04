@@ -15,6 +15,11 @@ def test_demo_pipeline_builds_auditable_outputs(tmp_path: Path):
     assert (tmp_path / "data" / "mamdani_results.csv").exists()
     assert (tmp_path / "data" / "evaluation_results.csv").exists()
     assert (tmp_path / "data" / "evaluation_gold_templates.csv").exists()
+    assert (tmp_path / "data" / "ontology_lexicon.csv").exists()
+    assert (tmp_path / "data" / "expert_calibration_template.csv").exists()
+    assert (tmp_path / "data" / "source_stratification.csv").exists()
+    assert (tmp_path / "data" / "rule_lifecycle.csv").exists()
+    assert (tmp_path / "data" / "methodology_compliance.csv").exists()
     assert (tmp_path / "data" / "validation_report.csv").exists()
     assert (tmp_path / "data" / "implementation_audit.csv").exists()
     assert (tmp_path / "data" / "completion_assessment.csv").exists()
@@ -30,6 +35,12 @@ def test_demo_pipeline_builds_auditable_outputs(tmp_path: Path):
     assert (tmp_path / "wiki" / "audit" / "run_manifest.md").exists()
     assert (tmp_path / "wiki" / "audit" / "mamdani_sensitivity.md").exists()
     assert (tmp_path / "wiki" / "audit" / "evaluation_metrics.md").exists()
+    assert (tmp_path / "wiki" / "audit" / "methodology_compliance.md").exists()
     source_page = (tmp_path / "wiki" / "sources" / "SRC_001.md").read_text(encoding="utf-8")
     assert "Observation" in source_page
     assert "形式化说明" in source_page
+    observation_pages = list((tmp_path / "wiki" / "observations").glob("*.md"))
+    assert observation_pages
+    observation_page = observation_pages[0].read_text(encoding="utf-8")
+    assert "高频共现" in observation_page
+    assert "相关候选/正式规则" in observation_page

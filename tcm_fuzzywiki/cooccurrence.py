@@ -78,8 +78,9 @@ def mine_candidate_patterns(
     max_join_candidates = int(filters.get("max_join_candidates", 100_000))
 
     source_items = itemsets_by_source(observations)
-    total_sources = len(source_items)
-    if total_sources == 0:
+    all_source_ids = sorted({source.source_id for source in sources} or set(source_items))
+    total_sources = len(all_source_ids)
+    if total_sources == 0 or not source_items:
         return []
 
     small_sample = total_sources < SMALL_SAMPLE_SOURCE_THRESHOLD
@@ -89,7 +90,7 @@ def mine_candidate_patterns(
     production_min_source_count = max(configured_min_source_count, adaptive_support_count)
     effective_min_source_count = adaptive_support_count if small_sample else production_min_source_count
 
-    source_id_by_idx = sorted(source_items)
+    source_id_by_idx = all_source_ids
     source_idx_by_id = {source_id: idx for idx, source_id in enumerate(source_id_by_idx)}
     source_meta = {s.source_id: s for s in sources}
 

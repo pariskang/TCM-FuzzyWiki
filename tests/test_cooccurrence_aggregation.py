@@ -91,3 +91,29 @@ def test_candidate_pattern_source_ids_are_truncated_with_summary():
     assert patterns[0].source_count == 40
     assert len(patterns[0].source_ids) == 5
     assert "source_ids_truncated_to=5" in patterns[0].source_count_summary
+
+
+def test_candidate_support_denominator_includes_sources_without_observations():
+    sources = [SourceUnit(f"SRC_{idx:03d}", "Book", tradition_id="trad") for idx in range(10)]
+    observations = []
+    for idx in range(5):
+        for item_idx, item in enumerate(["item:a", "item:b"]):
+            observations.append(Observation(f"OBS_{idx}_{item_idx}", f"SRC_{idx:03d}", "item", item, item, 0.9, item, "mapped"))
+
+    patterns = mine_candidate_patterns(
+        observations,
+        sources,
+        {
+            "candidate_pattern_filter": {
+                "min_support": 0.1,
+                "min_source_count": 1,
+                "min_tradition_count": 1,
+                "min_lift": 0.1,
+                "min_pmi": -10,
+            }
+        },
+    )
+
+    pair = next(pattern for pattern in patterns if pattern.observations == ("item:a", "item:b"))
+    assert pair.source_count == 5
+    assert pair.support == 0.5
