@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import zlib
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from .models import Membership, Observation, clamp01
+
+
+def trapz(y: np.ndarray, x: np.ndarray) -> float:
+    """Trapezoidal integration that works on both NumPy >=2.0 and 1.x.
+
+    NumPy 2.0 renamed ``numpy.trapz`` to ``numpy.trapezoid``; the old name still
+    exists but emits a deprecation warning.  The declared dependency floor is
+    ``numpy>=1.23``, where only ``numpy.trapz`` exists, so we resolve whichever
+    symbol the installed NumPy actually provides instead of hard-coding one.
+    """
+
+    func = getattr(np, "trapezoid", None) or np.trapz
+    return float(func(y, x))
 
 
 @dataclass(slots=True)
@@ -45,10 +59,10 @@ def overlap_integral(linguistic: Trapezoid, target: Trapezoid, points: int = 200
     x = np.linspace(low, high, points)
     linguistic_values = linguistic.values(x)
     target_values = target.values(x)
-    denominator = np.trapezoid(linguistic_values, x)
+    denominator = trapz(linguistic_values, x)
     if denominator <= 0:
         return 0.0
-    numerator = np.trapezoid(linguistic_values * target_values, x)
+    numerator = trapz(linguistic_values * target_values, x)
     return clamp01(numerator / denominator)
 
 
@@ -67,7 +81,6 @@ class MembershipCalculator:
     def compute(self, observations: list[Observation]) -> list[Membership]:
         memberships: list[Membership] = []
         next_id = 1
-        rng = np.random.default_rng(self.random_seed)
         for obs in observations:
             entry = self.linguistic_values.get(obs.feature_value) or self.linguistic_values.get(obs.standard_observation)
             if not isinstance(entry, dict):
@@ -77,12 +90,17 @@ class MembershipCalculator:
                 fuzzy_set = str(mapping.get("fuzzy_set", "high"))
                 icc = mapping.get("icc")
                 icc_value = None if icc is None else float(icc)
-                membership = self._compute_value(entry, variable, fuzzy_set, mapping)
+                membership, mode_used = self._compute_value(entry, variable, fuzzy_set, mapping)
                 p5 = p95 = width = None
                 if icc_value is not None and icc_value < self.icc_threshold:
+                    # Propagate low-ICC uncertainty as a p5/p95 envelope, but keep the
+                    # point estimate equal to the deterministic membership: overwriting it
+                    # with a Monte Carlo mean made identical mappings report different μ
+                    # within one run (RNG drift) and biased boundary values via clipping.
+                    # Seeding per mapping makes the interval replayable across runs/order.
+                    rng = np.random.default_rng(self._interval_seed(variable, fuzzy_set, membership, icc_value))
                     samples = rng.normal(loc=membership, scale=max(0.03, (1.0 - icc_value) * 0.12), size=self.n_samples)
                     samples = np.clip(samples, 0.0, 1.0)
-                    membership = float(np.mean(samples))
                     p5 = float(np.percentile(samples, 5))
                     p95 = float(np.percentile(samples, 95))
                     width = p95 - p5
@@ -95,7 +113,7 @@ class MembershipCalculator:
                         variable=str(variable),
                         fuzzy_set=fuzzy_set,
                         membership=round(membership, 6),
-                        calculation_mode=self.mode,
+                        calculation_mode=mode_used,
                         status=str(mapping.get("status", entry.get("status", "bootstrap_prior"))),
                         icc=icc_value,
                         p5=None if p5 is None else round(p5, 6),
@@ -106,12 +124,30 @@ class MembershipCalculator:
                 next_id += 1
         return memberships
 
-    def _compute_value(self, entry: dict[str, Any], variable: str, fuzzy_set: str, mapping: dict[str, Any]) -> float:
+    def _interval_seed(self, variable: str, fuzzy_set: str, membership: float, icc_value: float) -> int:
+        key = f"{self.random_seed}|{variable}|{fuzzy_set}|{round(membership, 6)}|{round(icc_value, 6)}"
+        return zlib.crc32(key.encode("utf-8"))
+
+    def _compute_value(
+        self, entry: dict[str, Any], variable: str, fuzzy_set: str, mapping: dict[str, Any]
+    ) -> tuple[float, str]:
+        """Return ``(membership, calculation_mode)`` so the table records the path used.
+
+        Only mappings that configure a ``linguistic_set`` (and whose target fuzzy
+        variable/set exists) are computed by overlap integral.  Everything else
+        falls back to the configured bootstrap ``prior_membership`` constant, which
+        must be labelled honestly so a constant prior is never reported as an
+        integral-derived value.
+        """
+
         if self.mode == "overlap_integral" and "linguistic_set" in mapping:
             target_config = self.fuzzy_sets.get(variable, {}).get(fuzzy_set)
             if target_config is not None:
-                return overlap_integral(parse_trapezoid(mapping["linguistic_set"]), parse_trapezoid(target_config), self.points)
-        return clamp01(mapping.get("prior_membership", 0.0))
+                value = overlap_integral(
+                    parse_trapezoid(mapping["linguistic_set"]), parse_trapezoid(target_config), self.points
+                )
+                return value, "overlap_integral"
+        return clamp01(mapping.get("prior_membership", 0.0)), "prior_membership"
 
 
 def coverage(observations: list[Observation], memberships: list[Membership]) -> float:

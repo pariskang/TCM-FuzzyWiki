@@ -8,12 +8,14 @@
 
 - **XLSX/CSV 导入**：支持一行一个章节，并保留书名、章节、朝代、作者、主题、流派、地域、学术传统、来源权威性、文本完整性和语义清晰度等 metadata。
 - **章节级证据单元**：把原始章节转换为 `SourceUnit`，仅保存证据和质量权重，不在该层做诊断判断。
-- **llmlite 架构**：`tcm_fuzzywiki.llmlite.ChatModel` 是极简 LLM 协议；内置 Azure ChatGPT REST 适配器，也提供离线 deterministic extractor 便于测试与冷启动。
+- **llmlite 架构**：`tcm_fuzzywiki.llmlite.ChatModel` 是极简 LLM 协议；内置 Azure ChatGPT 与 OpenAI-compatible（MiniMax-M3 等）REST 适配器，也提供离线 deterministic extractor 便于测试与冷启动。
+- **断点续跑 LLM 构建**：`tcm-fuzzywiki build-llm` 提供 chunk 级 checkpoint 的可中断抽取——崩溃/限流/Colab 断线后重跑同一命令，只补抽失败的 chunk（含 partial 来源），并校验输入 SHA256 防止 checkpoint 错配；observation ID 按输入顺序确定性分配，与线程完成顺序无关。
+- **任意表格规范化**：`tcm-fuzzywiki normalize-input` 把任意中英文列名的章节 XLSX/CSV 映射为推荐字段，自动猜测正文列、填充默认 metadata，并输出可审计的列映射 JSON 报告。
 - **Observation-first 抽取**：LLM 只允许返回 `feature / feature_value / evidence_text / extraction_confidence`，禁止直接输出证候、病机或诊断。
 - **Observation 标准化与未映射日志**：通过 `observation_mapping` 映射标准 observation，并把高置信未覆盖项写入 `unmapped_observations.log`。
 - **Bootstrap prior 词表、专家校准与 LLM 分角色打分**：配置中每个语言变量带 `status`、`icc` 和 `review_status`；`tcm-fuzzywiki calibrate` 可汇总专家 membership CSV，`tcm-fuzzywiki roleplay-score` 可让现代循证医学专家/中医专家/古文字专家三个 LLM 角色自动打分并生成 calibrated YAML。
-- **交叠积分隶属度**：默认用 `∫ μ_linguistic(x)·μ_target(x) dx / ∫ μ_linguistic(x) dx`，数值积分方法为 trapezoidal。
-- **低 ICC 不确定性传播**：当 `icc < 0.75` 时进行 Monte Carlo 采样，输出 `p5 / p95 / uncertainty_width`。
+- **交叠积分隶属度**：当某 linguistic value 配置了 `linguistic_set` 且目标 fuzzy variable 存在对应 fuzzy set 时，使用 `∫ μ_linguistic(x)·μ_target(x) dx / ∫ μ_linguistic(x) dx`（trapezoidal 数值积分），`memberships.csv` 的 `calculation_mode` 记为 `overlap_integral`；若未配置 `linguistic_set`，则回退到配置中的 bootstrap `prior_membership` 常量先验，并把 `calculation_mode` 如实记为 `prior_membership`，避免把常量先验误标为积分结果。
+- **低 ICC 不确定性传播**：当 `icc < 0.75` 时进行 Monte Carlo 采样，输出 `p5 / p95 / uncertainty_width`；点估计 `membership` 仍保持确定性计算值（积分或先验），不会被采样均值覆盖，且按映射独立 seed，保证相同映射在不同运行/顺序下可复现。
 - **Observation 共现模式挖掘**：生成章节 itemset、support、confidence、lift、PMI、Jaccard、source diversity、tradition entropy、来源列表与代表证据。
 - **规则生命周期入口**：输出 `candidate_patterns.csv` 与 `expert_rule_review.csv`，用于专家把候选共现模式升格为正式规则。
 - **Larsen-style weighted activation**：规则激活公式为 `α = rule_weight × ∏ μ_i ^ w_i`，且前件统一读取 fuzzy variable membership。
@@ -154,6 +156,59 @@ tcm-fuzzywiki build \
 ```
 
 Azure 模式下，LLM 仍然只能抽取 observation；证候隶属度、规则激活、聚合与 Wiki 结果由 deterministic pipeline 复算。
+
+## OpenAI-compatible LLM（MiniMax-M3）与断点续跑构建
+
+针对大规模古籍抽取（Colab/服务器长任务、限流、断线），`build-llm` 提供 chunk 级断点续跑：
+
+```bash
+# 1. 任意原始表格先规范化为推荐字段（输出 .xlsx + .csv + 列映射报告）
+tcm-fuzzywiki normalize-input \
+  --input path/to/book_chapters_split.xlsx \
+  --output build/input/chapters.normalized.xlsx
+
+# 2. 配置 API Key（环境变量，绝不写入 notebook/代码/仓库）
+export MINIMAX_API_KEY='<your-key>'           # 或 OPENAI_API_KEY
+export OPENAI_BASE_URL='https://api.minimaxi.com/v1'   # 可省略，默认 MiniMax
+
+# 3. 小样本试跑
+tcm-fuzzywiki build-llm \
+  --input build/input/chapters.normalized.csv \
+  --config configs/tcm_fuzzywiki.yaml \
+  --output build/llm_wiki \
+  --model MiniMax-M3 --workers 3 --limit 3
+
+# 4. 全量运行；中断后重跑同一条命令即自动续跑
+tcm-fuzzywiki build-llm \
+  --input build/input/chapters.normalized.csv \
+  --config configs/tcm_fuzzywiki.yaml \
+  --output build/llm_wiki \
+  --model MiniMax-M3 --workers 4
+```
+
+断点续跑语义（chunk 级，而非 source 级）：
+
+- 每个章节先按 `--chunk-chars/--chunk-overlap` 确定性切块；每个 chunk 完成后立即追加写入 `extraction/extraction_chunks.jsonl`（append-only，崩溃最多损失正在写的一行，残行重载时自动跳过）。
+- 续跑时只重抽**失败或缺失**的 chunk：`partial_success` 来源的失败 chunk 会被补抽，而不是永久丢失。
+- `extraction/extraction_manifest.json` 记录输入 SHA256 与切块参数；输入或参数变化时拒绝续跑（换 `--output` 或加 `--no-resume`），防止 checkpoint 与数据错配。
+- 每个 chunk 记录自身文本 SHA256，文本变化的 chunk 自动重抽。
+- observation ID 在汇编阶段按（输入顺序 × chunk 序号 × 行序）确定性分配：同一 checkpoint 重跑产物完全一致，与并发完成顺序无关。
+- 抽取完成后复用同一个 `run_pipeline`：membership、共现、规则、推理、Mamdani、聚合、网络、Wiki、validation、audit、manifest 全量产出，与 `build`/`run-demo` 永远同步。
+- `--strict` 让任何 chunk 仍失败时以非零退出（默认仍生成产物并在 `source_progress.csv` 标注 `partial_success/error`）。
+- LLM 输出经鲁棒解析（剥离 `<think>`/Markdown 围栏、平衡大括号提取、尾逗号修复；安装可选 `json-repair` 后进一步增强）。
+
+checkpoint 产物（`<output>/extraction/`）：
+
+| 文件 | 含义 |
+|---|---|
+| `extraction_chunks.jsonl` | 每 chunk 一行的原始抽取记录（含 usage、错误、chunk SHA256）。 |
+| `extraction_manifest.json` | 输入 SHA256 与切块参数，续跑一致性校验。 |
+| `observations_checkpoint.csv` | 汇编后的 observation 快照。 |
+| `source_progress.csv` | 逐来源状态：success / partial_success / error。 |
+| `llm_usage.csv` / `llm_errors.csv` | token 用量与失败明细。 |
+| `live_status.txt` | 实时进度（适合 Colab 中监视）。 |
+
+Colab 全流程即：挂载 Drive → `git clone` + `pip install -e .` → `normalize-input` → `build-llm --output /content/drive/.../run_x`；断线后重新运行同一 `build-llm` cell 即可续跑。
 
 ## 配置文件结构
 
@@ -323,8 +378,10 @@ tcm_fuzzywiki/
   extraction.py      # LLM/离线 observation 抽取与标准化
   inference.py       # Larsen-style weighted activation 推理
   io.py              # XLSX/CSV 输入与数据表输出
-  llmlite.py         # 轻量 LLM 协议与 Azure ChatGPT 适配器
+  llmlite.py         # 轻量 LLM 协议、Azure 与 OpenAI-compatible 适配器、鲁棒 JSON 解析
   membership.py      # 交叠积分与低 ICC Monte Carlo
+  normalize.py       # 任意章节表格规范化为推荐字段
+  resume.py          # chunk 级断点续跑 LLM 抽取引擎
   mamdani.py         # Mamdani 敏感性分析
   evaluation.py      # FCR/CRP/MIC/SMB/FIA 指标框架
   models.py          # 核心数据模型

@@ -33,16 +33,28 @@ def run_pipeline(
     use_azure_llm: bool = False,
     rules_csv: str | Path | None = None,
     gold_dir: str | Path | None = None,
+    observations: list[Any] | None = None,
+    manifest_extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Run the full deterministic pipeline.
+
+    ``observations`` may be supplied by an external extraction stage (e.g. the
+    resumable OpenAI-compatible LLM workflow); the full downstream — membership,
+    mining, inference, aggregation, wiki, audit, validation, manifest — then runs
+    unchanged, so external extractors can never drift from the main pipeline.
+    ``manifest_extra`` is merged into ``run_manifest.json`` for provenance.
+    """
+
     config = load_yaml(config_path)
     out = Path(output_dir)
     data_dir = out / "data"
     wiki_dir = out / "wiki"
 
     sources = read_chapters(input_path)
-    extractor = LLMObservationExtractor(AzureChatGPTLLM(AzureChatGPTConfig.from_env())) if use_azure_llm else RuleBasedObservationExtractor()
-    observations = extractor.extract(sources)
-    observations = ObservationNormalizer(config.get("observation_mapping", {})).normalize(observations)
+    if observations is None:
+        extractor = LLMObservationExtractor(AzureChatGPTLLM(AzureChatGPTConfig.from_env())) if use_azure_llm else RuleBasedObservationExtractor()
+        observations = extractor.extract(sources)
+    observations = ObservationNormalizer(config.get("observation_mapping", {})).normalize(list(observations))
     memberships = MembershipCalculator(config).compute(observations)
     patterns = mine_candidate_patterns(observations, sources, config)
     rules = load_rules(config, rules_csv)
@@ -148,6 +160,9 @@ def run_pipeline(
         rules_csv=rules_csv,
         gold_dir=gold_dir,
     )
+    if manifest_extra:
+        manifest["execution"] = {**manifest.get("execution", {}), **manifest_extra.pop("execution", {})}
+        manifest.update(manifest_extra)
     write_json(data_dir / "run_manifest.json", manifest)
     manifest_path = wiki_dir / "audit" / "run_manifest.md"
     write_text(manifest_path, manifest_markdown(manifest))
