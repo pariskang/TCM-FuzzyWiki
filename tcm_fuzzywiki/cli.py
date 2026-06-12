@@ -12,7 +12,9 @@ from .calibration import calibrate_config_from_experts, write_calibrated_config
 from .config import load_yaml
 from .io import read_chapters
 from .pipeline import run_pipeline
-from .llmlite import AzureChatGPTConfig, AzureChatGPTLLM
+from .llmlite import AzureChatGPTConfig, AzureChatGPTLLM, OpenAICompatibleConfig, OpenAICompatibleLLM
+from .provenance import file_sha256
+from .resume import extract_resumable
 from .roleplay import DeterministicRoleplayScorer, LLMRoleplayExpertScorer, calibrate_from_roleplay_scores
 from .validation import readiness_markdown, validate_config, validate_sources
 
@@ -30,6 +32,38 @@ def main() -> None:
     build.add_argument("--gold-dir", help="Optional directory with expert gold-standard CSV files for evaluation")
 
 
+
+    build_llm = sub.add_parser(
+        "build-llm",
+        help="Build via an OpenAI-compatible LLM (e.g. MiniMax-M3) with chunk-level resumable checkpoints",
+    )
+    build_llm.add_argument("--input", required=True, help="Input .xlsx or .csv chapter table")
+    build_llm.add_argument("--config", default="configs/tcm_fuzzywiki.yaml", help="YAML config path")
+    build_llm.add_argument("--output", required=True, help="Output directory (also holds extraction/ checkpoints)")
+    build_llm.add_argument("--model", default=None, help="Model name (default env OPENAI_MODEL or MiniMax-M3)")
+    build_llm.add_argument("--base-url", default=None, help="OpenAI-compatible base URL (default env OPENAI_BASE_URL or MiniMax)")
+    build_llm.add_argument("--temperature", type=float, default=0.0)
+    build_llm.add_argument("--max-tokens", type=int, default=3000, help="max_tokens per chunk completion")
+    build_llm.add_argument("--thinking", choices=["adaptive", "disabled", "none"], default="disabled", help="MiniMax thinking mode; 'none' omits the field for non-MiniMax servers")
+    build_llm.add_argument("--use-response-format", action="store_true", help="Send response_format json_object (auto-fallback if rejected)")
+    build_llm.add_argument("--chunk-chars", type=int, default=1800)
+    build_llm.add_argument("--chunk-overlap", type=int, default=80)
+    build_llm.add_argument("--max-observations-per-chunk", type=int, default=12)
+    build_llm.add_argument("--workers", type=int, default=3)
+    build_llm.add_argument("--request-timeout", type=float, default=180.0)
+    build_llm.add_argument("--max-retries", type=int, default=4)
+    build_llm.add_argument("--retry-sleep", type=float, default=4.0)
+    build_llm.add_argument("--limit", type=int, default=0, help="Process only the first N sources (smoke test)")
+    build_llm.add_argument("--no-resume", action="store_true", help="Discard extraction checkpoints and start fresh")
+    build_llm.add_argument("--strict", action="store_true", help="Exit non-zero if any chunk still failed after retries, before downstream build")
+    build_llm.add_argument("--rules-csv", help="Optional expert-reviewed rules.csv")
+    build_llm.add_argument("--gold-dir", help="Optional directory with expert gold-standard CSV files")
+
+    normalize = sub.add_parser("normalize-input", help="Normalize an arbitrary chapter XLSX/CSV into the recommended input schema")
+    normalize.add_argument("--input", required=True, help="Raw .xlsx or .csv chapter table")
+    normalize.add_argument("--output", required=True, help="Normalized .xlsx output path (a sibling .csv is also written)")
+    normalize.add_argument("--sheet", default="0", help="Sheet name or index for .xlsx inputs (default 0)")
+    normalize.add_argument("--report", help="Optional column-mapping JSON report path")
 
     assess = sub.add_parser("assess", help="Assess whether an existing build output is formal-ready or still has caveats")
     assess.add_argument("--output", default="build/demo", help="Build output directory containing data/*.csv audit files")
@@ -57,6 +91,17 @@ def main() -> None:
     demo.add_argument("--output", default="build/demo", help="Output directory")
 
     args = parser.parse_args()
+    if args.command == "build-llm":
+        summary = _run_build_llm(args)
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return
+    if args.command == "normalize-input":
+        from .normalize import normalize_chapter_table
+
+        sheet: int | str = int(args.sheet) if str(args.sheet).isdigit() else args.sheet
+        _, report = normalize_chapter_table(args.input, args.output, args.report, sheet_name=sheet)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
     if args.command == "assess":
         _, markdown = assess_output(args.output)
         print(markdown)
@@ -92,6 +137,77 @@ def main() -> None:
     else:
         summary = run_pipeline(args.input, args.config, args.output, args.azure_llm, args.rules_csv, args.gold_dir)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+def _run_build_llm(args: argparse.Namespace) -> dict:
+    """Resumable LLM extraction followed by the full standard pipeline."""
+
+    config = load_yaml(args.config)
+    sources = read_chapters(args.input)
+    input_for_pipeline = Path(args.input)
+    if args.limit and args.limit > 0:
+        sources = sources[: args.limit]
+
+    extra_body = {} if args.thinking == "none" else {"thinking": {"type": args.thinking}}
+    llm = OpenAICompatibleLLM(
+        OpenAICompatibleConfig.from_env(
+            model=args.model,
+            base_url=args.base_url,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            timeout=args.request_timeout,
+            max_retries=args.max_retries,
+            retry_sleep=args.retry_sleep,
+            use_response_format=args.use_response_format,
+            extra_body=extra_body,
+        )
+    )
+
+    observations, report = extract_resumable(
+        sources,
+        config,
+        args.output,
+        llm,
+        chunk_chars=args.chunk_chars,
+        chunk_overlap=args.chunk_overlap,
+        max_observations_per_chunk=args.max_observations_per_chunk,
+        workers=args.workers,
+        resume=not args.no_resume,
+        input_sha256=file_sha256(args.input),
+        model_label=llm.config.model,
+    )
+    print(json.dumps({"extraction_report": report}, ensure_ascii=False, indent=2))
+    if args.strict and report["chunks_failed"] > 0:
+        raise SystemExit(
+            f"--strict: {report['chunks_failed']} chunk(s) still failed; rerun the same command to resume, "
+            f"see {report['checkpoint_dir']}/llm_errors.csv"
+        )
+
+    if args.limit and args.limit > 0:
+        import pandas as pd
+
+        subset_path = Path(args.output) / "extraction" / "input_subset.csv"
+        frame = pd.read_excel(args.input) if input_for_pipeline.suffix.lower() in {".xlsx", ".xls"} else pd.read_csv(args.input)
+        subset_path.parent.mkdir(parents=True, exist_ok=True)
+        frame.head(args.limit).to_csv(subset_path, index=False, encoding="utf-8-sig")
+        input_for_pipeline = subset_path
+
+    summary = run_pipeline(
+        input_for_pipeline,
+        args.config,
+        args.output,
+        rules_csv=args.rules_csv,
+        gold_dir=args.gold_dir,
+        observations=observations,
+        manifest_extra={
+            "execution": {"extractor": "openai_compatible_llm_resumable"},
+            "llm_provider": "openai_compatible",
+            "llm_model": llm.config.model,
+            "llm_base_url": llm.config.base_url,
+            "extraction_report": report,
+        },
+    )
+    return summary
 
 
 if __name__ == "__main__":
