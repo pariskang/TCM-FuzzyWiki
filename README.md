@@ -12,8 +12,8 @@
 - **Observation-first 抽取**：LLM 只允许返回 `feature / feature_value / evidence_text / extraction_confidence`，禁止直接输出证候、病机或诊断。
 - **Observation 标准化与未映射日志**：通过 `observation_mapping` 映射标准 observation，并把高置信未覆盖项写入 `unmapped_observations.log`。
 - **Bootstrap prior 词表、专家校准与 LLM 分角色打分**：配置中每个语言变量带 `status`、`icc` 和 `review_status`；`tcm-fuzzywiki calibrate` 可汇总专家 membership CSV，`tcm-fuzzywiki roleplay-score` 可让现代循证医学专家/中医专家/古文字专家三个 LLM 角色自动打分并生成 calibrated YAML。
-- **交叠积分隶属度**：默认用 `∫ μ_linguistic(x)·μ_target(x) dx / ∫ μ_linguistic(x) dx`，数值积分方法为 trapezoidal。
-- **低 ICC 不确定性传播**：当 `icc < 0.75` 时进行 Monte Carlo 采样，输出 `p5 / p95 / uncertainty_width`。
+- **交叠积分隶属度**：当某 linguistic value 配置了 `linguistic_set` 且目标 fuzzy variable 存在对应 fuzzy set 时，使用 `∫ μ_linguistic(x)·μ_target(x) dx / ∫ μ_linguistic(x) dx`（trapezoidal 数值积分），`memberships.csv` 的 `calculation_mode` 记为 `overlap_integral`；若未配置 `linguistic_set`，则回退到配置中的 bootstrap `prior_membership` 常量先验，并把 `calculation_mode` 如实记为 `prior_membership`，避免把常量先验误标为积分结果。
+- **低 ICC 不确定性传播**：当 `icc < 0.75` 时进行 Monte Carlo 采样，输出 `p5 / p95 / uncertainty_width`；点估计 `membership` 仍保持确定性计算值（积分或先验），不会被采样均值覆盖，且按映射独立 seed，保证相同映射在不同运行/顺序下可复现。
 - **Observation 共现模式挖掘**：生成章节 itemset、support、confidence、lift、PMI、Jaccard、source diversity、tradition entropy、来源列表与代表证据。
 - **规则生命周期入口**：输出 `candidate_patterns.csv` 与 `expert_rule_review.csv`，用于专家把候选共现模式升格为正式规则。
 - **Larsen-style weighted activation**：规则激活公式为 `α = rule_weight × ∏ μ_i ^ w_i`，且前件统一读取 fuzzy variable membership。

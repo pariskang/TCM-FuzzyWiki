@@ -15,8 +15,13 @@ def infer(memberships: list[Membership], rules: list[FuzzyRule]) -> list[Inferen
     intervals: dict[tuple[str, str], tuple[float | None, float | None]] = {}
     for mem in memberships:
         key = mem.variable_key
-        by_source[mem.source_id][key] = max(by_source[mem.source_id].get(key, 0.0), mem.membership)
-        intervals[(mem.source_id, key)] = (mem.p5, mem.p95)
+        current = by_source[mem.source_id].get(key)
+        # Antecedents read the strongest membership per fuzzy variable; keep the
+        # p5/p95 interval of that same membership so the reported low/high
+        # activation envelope is traceable to the value actually used.
+        if current is None or mem.membership > current:
+            by_source[mem.source_id][key] = mem.membership
+            intervals[(mem.source_id, key)] = (mem.p5, mem.p95)
 
     results: list[InferenceResult] = []
     for source_id, values in by_source.items():

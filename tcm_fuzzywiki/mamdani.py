@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from .membership import Trapezoid, parse_trapezoid
+from .membership import Trapezoid, parse_trapezoid, trapz
 from .models import FuzzyRule, InferenceResult, clamp01
 
 
@@ -45,8 +45,8 @@ def run_mamdani_sensitivity(
             truncated = np.minimum(shape.values(x), result.activation)
             aggregate = np.maximum(aggregate, truncated)
             contributing_rules.append(result.rule_id)
-        denominator = np.trapezoid(aggregate, x)
-        centroid = 0.0 if denominator <= 0 else float(np.trapezoid(x * aggregate, x) / denominator)
+        denominator = trapz(aggregate, x)
+        centroid = 0.0 if denominator <= 0 else float(trapz(x * aggregate, x) / denominator)
         rows.append(
             {
                 "source_id": source_id,
