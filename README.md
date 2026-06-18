@@ -1,8 +1,12 @@
 # TCM-FuzzyWiki V5.0
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pariskang/TCM-FuzzyWiki/blob/main/colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb)
+
 基于 XLSX 古籍章节的中医模糊知识 Wiki 构建框架。项目实现了 **observation-first** 的 MVP 链路：每一行章节先变成可追溯的 `SourceUnit`，LLM 或离线规则抽取器只抽取 observation，不直接输出证候结论；后续由本体映射、模糊集合交叠积分、共现模式挖掘、专家规则、Larsen-style 推理、相关性折扣分层聚合和 Markdown Wiki 生成器完成可审计知识编译。
 
 > 形式化边界：本项目生成的 μ 值是基于文本证据、语言变量映射、模糊规则和专家校准配置得到的形式化近似结果，不等同于现代临床诊断。
+
+> Colab 一键运行（MiniMax-M3，多并发 + 断点续跑）：[`colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb`](colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb)。上方 Colab 徽章在本 notebook 合并入 `main` 后即可直接打开。合并前预览：在 Colab 中选择「文件 → 打开笔记本 → GitHub」，输入 `pariskang/TCM-FuzzyWiki`，在分支下拉里选 `claude/elegant-mccarthy-p7zg2g`，再选该 notebook（Colab 的 URL 不支持带斜杠的分支名，故需用此方式）。
 
 ## 已实现能力
 
