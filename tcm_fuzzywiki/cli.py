@@ -12,7 +12,14 @@ from .calibration import calibrate_config_from_experts, write_calibrated_config
 from .config import load_yaml
 from .io import read_chapters
 from .pipeline import run_pipeline
-from .llmlite import AzureChatGPTConfig, AzureChatGPTLLM, OpenAICompatibleConfig, OpenAICompatibleLLM
+from .llmlite import (
+    AnthropicCompatibleConfig,
+    AnthropicCompatibleLLM,
+    AzureChatGPTConfig,
+    AzureChatGPTLLM,
+    OpenAICompatibleConfig,
+    OpenAICompatibleLLM,
+)
 from .provenance import file_sha256
 from .resume import extract_resumable
 from .roleplay import DeterministicRoleplayScorer, LLMRoleplayExpertScorer, calibrate_from_roleplay_scores
@@ -40,8 +47,9 @@ def main() -> None:
     build_llm.add_argument("--input", required=True, help="Input .xlsx or .csv chapter table")
     build_llm.add_argument("--config", default="configs/tcm_fuzzywiki.yaml", help="YAML config path")
     build_llm.add_argument("--output", required=True, help="Output directory (also holds extraction/ checkpoints)")
-    build_llm.add_argument("--model", default=None, help="Model name (default env OPENAI_MODEL or MiniMax-M3)")
-    build_llm.add_argument("--base-url", default=None, help="OpenAI-compatible base URL (default env OPENAI_BASE_URL or MiniMax)")
+    build_llm.add_argument("--provider", choices=["openai", "anthropic"], default="openai", help="LLM wire protocol; both target MiniMax-M3 by default")
+    build_llm.add_argument("--model", default=None, help="Model name (default env OPENAI_MODEL/ANTHROPIC_MODEL or MiniMax-M3)")
+    build_llm.add_argument("--base-url", default=None, help="Base URL (default MiniMax: /v1 for openai, /anthropic for anthropic)")
     build_llm.add_argument("--temperature", type=float, default=0.0)
     build_llm.add_argument("--max-tokens", type=int, default=3000, help="max_tokens per chunk completion")
     build_llm.add_argument("--thinking", choices=["adaptive", "disabled", "none"], default="disabled", help="MiniMax thinking mode; 'none' omits the field for non-MiniMax servers")
@@ -148,20 +156,37 @@ def _run_build_llm(args: argparse.Namespace) -> dict:
     if args.limit and args.limit > 0:
         sources = sources[: args.limit]
 
-    extra_body = {} if args.thinking == "none" else {"thinking": {"type": args.thinking}}
-    llm = OpenAICompatibleLLM(
-        OpenAICompatibleConfig.from_env(
-            model=args.model,
-            base_url=args.base_url,
-            temperature=args.temperature,
-            max_tokens=args.max_tokens,
-            timeout=args.request_timeout,
-            max_retries=args.max_retries,
-            retry_sleep=args.retry_sleep,
-            use_response_format=args.use_response_format,
-            extra_body=extra_body,
+    if args.provider == "anthropic":
+        thinking = {"type": "enabled", "budget_tokens": 1024} if args.thinking == "adaptive" else None
+        llm = AnthropicCompatibleLLM(
+            AnthropicCompatibleConfig.from_env(
+                model=args.model,
+                base_url=args.base_url,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                timeout=args.request_timeout,
+                max_retries=args.max_retries,
+                retry_sleep=args.retry_sleep,
+                thinking=thinking,
+            )
         )
-    )
+        provider_label, model_label, base_url = "anthropic", llm.config.model, llm.config.base_url
+    else:
+        extra_body = {} if args.thinking == "none" else {"thinking": {"type": args.thinking}}
+        llm = OpenAICompatibleLLM(
+            OpenAICompatibleConfig.from_env(
+                model=args.model,
+                base_url=args.base_url,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                timeout=args.request_timeout,
+                max_retries=args.max_retries,
+                retry_sleep=args.retry_sleep,
+                use_response_format=args.use_response_format,
+                extra_body=extra_body,
+            )
+        )
+        provider_label, model_label, base_url = "openai_compatible", llm.config.model, llm.config.base_url
 
     observations, report = extract_resumable(
         sources,
@@ -200,10 +225,10 @@ def _run_build_llm(args: argparse.Namespace) -> dict:
         gold_dir=args.gold_dir,
         observations=observations,
         manifest_extra={
-            "execution": {"extractor": "openai_compatible_llm_resumable"},
-            "llm_provider": "openai_compatible",
-            "llm_model": llm.config.model,
-            "llm_base_url": llm.config.base_url,
+            "execution": {"extractor": f"{provider_label}_llm_resumable"},
+            "llm_provider": provider_label,
+            "llm_model": model_label,
+            "llm_base_url": base_url,
             "extraction_report": report,
         },
     )
