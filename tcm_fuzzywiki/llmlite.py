@@ -307,3 +307,167 @@ class OpenAICompatibleLLM:
             return exc.read().decode("utf-8", errors="replace")
         except Exception:  # pragma: no cover - depends on server stream state.
             return str(exc)
+
+
+def text_from_anthropic_blocks(blocks: Any) -> tuple[str, str]:
+    """Return ``(text, thinking)`` joined from Anthropic content blocks.
+
+    Accepts both SDK block objects (``block.type`` / ``block.text``) and plain
+    dicts (from ``message.model_dump()`` or a raw HTTP response), so the same
+    extraction works whether the ``anthropic`` SDK is installed or not.
+    """
+
+    texts: list[str] = []
+    thoughts: list[str] = []
+    for block in blocks or []:
+        if isinstance(block, dict):
+            block_type = block.get("type", "")
+            if block_type == "text":
+                texts.append(str(block.get("text", "")))
+            elif block_type == "thinking":
+                thoughts.append(str(block.get("thinking", "")))
+        else:
+            block_type = getattr(block, "type", "")
+            if block_type == "text":
+                texts.append(str(getattr(block, "text", "")))
+            elif block_type == "thinking":
+                thoughts.append(str(getattr(block, "thinking", "")))
+    return "".join(texts), "\n".join(t for t in thoughts if t)
+
+
+@dataclass(slots=True)
+class AnthropicCompatibleConfig:
+    """Configuration for an Anthropic Messages API endpoint.
+
+    Targets MiniMax's Anthropic-compatible base (``https://api.minimaxi.com/anthropic``)
+    or api.anthropic.com.  ``thinking`` follows the Anthropic schema, e.g.
+    ``{"type": "enabled", "budget_tokens": 1024}``; leave it ``None`` (default) for
+    the most stable structured JSON extraction.
+    """
+
+    base_url: str
+    model: str
+    api_key: str
+    temperature: float = 0.0
+    max_tokens: int = 3000
+    timeout: float = 180.0
+    max_retries: int = 4
+    retry_sleep: float = 4.0
+    anthropic_version: str = "2023-06-01"
+    thinking: dict[str, Any] | None = None
+
+    @classmethod
+    def from_env(
+        cls,
+        model: str | None = None,
+        base_url: str | None = None,
+        **overrides: Any,
+    ) -> "AnthropicCompatibleConfig":
+        api_key = os.environ.get("MINIMAX_API_KEY") or os.environ.get("ANTHROPIC_API_KEY") or ""
+        if not api_key:
+            raise RuntimeError("Set MINIMAX_API_KEY or ANTHROPIC_API_KEY for the Anthropic-compatible adapter.")
+        return cls(
+            base_url=(base_url or os.environ.get("ANTHROPIC_BASE_URL", "https://api.minimaxi.com/anthropic")).rstrip("/"),
+            model=model or os.environ.get("ANTHROPIC_MODEL", "MiniMax-M3"),
+            api_key=api_key,
+            **overrides,
+        )
+
+
+class AnthropicCompatibleLLM:
+    """Anthropic Messages adapter; uses the ``anthropic`` SDK when available.
+
+    When the SDK is importable it is used directly (matching MiniMax's documented
+    usage); otherwise the same request is issued over urllib so the core package
+    keeps no hard SDK dependency.  Either way the model is trusted only for
+    observation rows — downstream fuzzy computation stays deterministic.
+    """
+
+    def __init__(self, config: AnthropicCompatibleConfig, prefer_sdk: bool = True):
+        self.config = config
+        self._client = None
+        if prefer_sdk:
+            try:  # pragma: no cover - exercised only when the SDK is installed.
+                import anthropic
+
+                self._client = anthropic.Anthropic(
+                    base_url=config.base_url, api_key=config.api_key, timeout=config.timeout
+                )
+            except Exception:
+                self._client = None
+
+    def complete_json(self, system_prompt: str, user_prompt: str) -> object:
+        payload, _meta = self.complete_json_with_meta(system_prompt, user_prompt)
+        return payload
+
+    def complete_json_with_meta(self, system_prompt: str, user_prompt: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        last_error: Exception | None = None
+        for attempt in range(1, self.config.max_retries + 1):
+            try:
+                return self._call_once(system_prompt, user_prompt, attempt)
+            except Exception as exc:
+                last_error = exc
+                if attempt < self.config.max_retries:
+                    time.sleep(self.config.retry_sleep * attempt)
+        raise RuntimeError(
+            f"Anthropic-compatible completion failed after {self.config.max_retries} attempts: {last_error}"
+        ) from last_error
+
+    def _request_kwargs(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "model": self.config.model,
+            "max_tokens": self.config.max_tokens,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+            "temperature": self.config.temperature,
+        }
+        if self.config.thinking:
+            kwargs["thinking"] = self.config.thinking
+        return kwargs
+
+    def _call_once(self, system_prompt: str, user_prompt: str, attempt: int) -> tuple[dict[str, Any], dict[str, Any]]:
+        data = self._call_sdk(system_prompt, user_prompt) if self._client is not None else self._call_urllib(system_prompt, user_prompt)
+        text, thinking = text_from_anthropic_blocks(data.get("content"))
+        payload = parse_json_payload(text if text.strip() else thinking)
+        usage = data.get("usage")
+        meta = {
+            "response_id": data.get("id", ""),
+            "model": data.get("model", self.config.model),
+            "finish_reason": data.get("stop_reason", ""),
+            "usage": usage if isinstance(usage, dict) else {},
+            "attempt": attempt,
+        }
+        return payload, meta
+
+    def _call_sdk(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        message = self._client.messages.create(**self._request_kwargs(system_prompt, user_prompt))
+        if hasattr(message, "model_dump"):
+            return message.model_dump()
+        return {  # pragma: no cover - defensive for non-pydantic SDK builds.
+            "id": getattr(message, "id", ""),
+            "model": getattr(message, "model", self.config.model),
+            "stop_reason": getattr(message, "stop_reason", ""),
+            "content": getattr(message, "content", []),
+            "usage": getattr(message, "usage", {}),
+        }
+
+    def _call_urllib(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
+        request = urllib.request.Request(
+            f"{self.config.base_url}/v1/messages",
+            data=json.dumps(self._request_kwargs(system_prompt, user_prompt), ensure_ascii=False).encode("utf-8"),
+            headers={
+                "x-api-key": self.config.api_key,
+                "anthropic-version": self.config.anthropic_version,
+                "content-type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.config.timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:  # pragma: no cover - depends on server stream state.
+                body = str(exc)
+            raise RuntimeError(f"HTTP {exc.code}: {body[:300]}") from exc

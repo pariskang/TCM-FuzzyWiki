@@ -157,9 +157,16 @@ tcm-fuzzywiki build \
 
 Azure 模式下，LLM 仍然只能抽取 observation；证候隶属度、规则激活、聚合与 Wiki 结果由 deterministic pipeline 复算。
 
-## OpenAI-compatible LLM（MiniMax-M3）与断点续跑构建
+## MiniMax-M3 / OpenAI / Anthropic LLM 与断点续跑构建
 
-针对大规模古籍抽取（Colab/服务器长任务、限流、断线），`build-llm` 提供 chunk 级断点续跑：
+针对大规模古籍抽取（Colab/服务器长任务、限流、断线），`build-llm` 提供多并发 + chunk 级断点续跑，并支持两种 MiniMax-M3 接入协议：
+
+- `--provider openai`（默认）：OpenAI-compatible，base URL 默认 `https://api.minimaxi.com/v1`。
+- `--provider anthropic`：Anthropic Messages 协议，base URL 默认 `https://api.minimaxi.com/anthropic`；安装 `anthropic` SDK 时自动走 SDK，否则用内置 urllib 适配器（零硬依赖）。
+
+开箱即用的 Colab notebook：[`colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb`](colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb)（挂载 Drive → clone+install → `normalize-input` → `build-llm`，断线重跑同一 cell 即续跑）。
+
+OpenAI 协议示例：
 
 ```bash
 # 1. 任意原始表格先规范化为推荐字段（输出 .xlsx + .csv + 列映射报告）
@@ -184,6 +191,17 @@ tcm-fuzzywiki build-llm \
   --config configs/tcm_fuzzywiki.yaml \
   --output build/llm_wiki \
   --model MiniMax-M3 --workers 4
+```
+
+改用 Anthropic 协议只需切换 provider（base URL 自动指向 `/anthropic`）：
+
+```bash
+export MINIMAX_API_KEY='<your-key>'            # 或 ANTHROPIC_API_KEY
+tcm-fuzzywiki build-llm \
+  --input build/input/chapters.normalized.csv \
+  --config configs/tcm_fuzzywiki.yaml \
+  --output build/llm_wiki \
+  --provider anthropic --model MiniMax-M3 --workers 4
 ```
 
 断点续跑语义（chunk 级，而非 source 级）：
