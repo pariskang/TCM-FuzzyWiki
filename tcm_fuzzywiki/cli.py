@@ -156,6 +156,27 @@ def _run_build_llm(args: argparse.Namespace) -> dict:
     if args.limit and args.limit > 0:
         sources = sources[: args.limit]
 
+    # Sanity check: refuse to silently process tens of thousands of empty-text
+    # sources when the input column names didn't map to text_original/原文/etc.
+    # This is the most common Colab failure mode for unfamiliar XLSX exports.
+    n_total = len(sources)
+    n_with_text = sum(1 for source in sources if (source.original_text or source.text_punctuated or source.text_modern).strip())
+    if n_total > 0 and n_with_text == 0:
+        raise SystemExit(
+            f"All {n_total} sources read from {args.input!s} have empty text. "
+            "The chapter-body column was not recognised. Run "
+            "`tcm-fuzzywiki normalize-input --input <raw> --output <normalized.xlsx>` first "
+            "and pass the generated .csv (or .xlsx) as --input to build-llm. "
+            "Alternatively rename your body column to one of: "
+            "text_original / original_text / 原文 / 正文 / 内容 / chapter_text / text / 古籍原文 / 分章内容 / 段落."
+        )
+    if n_total > 0 and n_with_text < n_total * 0.5:
+        print(
+            f"warning: only {n_with_text}/{n_total} sources have usable text; "
+            "consider running `tcm-fuzzywiki normalize-input` and re-running with the normalized output.",
+            flush=True,
+        )
+
     if args.provider == "anthropic":
         thinking = {"type": "enabled", "budget_tokens": 1024} if args.thinking == "adaptive" else None
         llm = AnthropicCompatibleLLM(
