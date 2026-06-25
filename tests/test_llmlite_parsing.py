@@ -1,6 +1,10 @@
 import pytest
 
-from tcm_fuzzywiki.llmlite import parse_json_payload, strip_think_and_fences
+from tcm_fuzzywiki.llmlite import (
+    OpenAICompatibleConfig,
+    parse_json_payload,
+    strip_think_and_fences,
+)
 
 
 def test_parse_plain_json_object():
@@ -33,3 +37,40 @@ def test_parse_extracts_embedded_object_from_prose():
 def test_parse_raises_on_garbage():
     with pytest.raises(ValueError):
         parse_json_payload("完全不是 JSON 的内容")
+
+
+def test_azure_config_from_explicit_args():
+    config = OpenAICompatibleConfig.from_azure(
+        model="Kimi-K2.5",
+        endpoint="https://fosterpearson-ft-5186-resource.openai.azure.com",
+        api_key="secret-key",
+    )
+    assert config.model == "Kimi-K2.5"
+    assert config.base_url == "https://fosterpearson-ft-5186-resource.openai.azure.com/openai/v1"
+    assert config.api_key == "secret-key"
+
+
+def test_azure_config_accepts_endpoint_with_v1_suffix():
+    config = OpenAICompatibleConfig.from_azure(
+        model="Kimi-K2.5",
+        endpoint="https://res.openai.azure.com/openai/v1/",
+        api_key="k",
+    )
+    assert config.base_url == "https://res.openai.azure.com/openai/v1"
+
+
+def test_azure_config_reads_environment(monkeypatch):
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://res.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "Kimi-K2.5")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "env-key")
+    config = OpenAICompatibleConfig.from_azure()
+    assert config.base_url == "https://res.openai.azure.com/openai/v1"
+    assert config.model == "Kimi-K2.5"
+    assert config.api_key == "env-key"
+
+
+def test_azure_config_requires_endpoint(monkeypatch):
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "k")
+    with pytest.raises(RuntimeError):
+        OpenAICompatibleConfig.from_azure()
