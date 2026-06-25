@@ -229,6 +229,56 @@ class OpenAICompatibleConfig:
             **overrides,
         )
 
+    @staticmethod
+    def _azure_v1_base_url(endpoint: str) -> str:
+        """Normalise an Azure resource endpoint to its OpenAI-compatible ``/openai/v1`` base.
+
+        Accepts either the bare resource host
+        (``https://<resource>.openai.azure.com``) or one that already includes the
+        ``/openai/v1`` suffix, so users can paste whichever form Azure shows them.
+        """
+
+        base = endpoint.rstrip("/")
+        if base.endswith("/openai/v1"):
+            return base
+        if base.endswith("/openai"):
+            return f"{base}/v1"
+        return f"{base}/openai/v1"
+
+    @classmethod
+    def from_azure(
+        cls,
+        model: str | None = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
+        **overrides: Any,
+    ) -> "OpenAICompatibleConfig":
+        """Build a config for Azure's OpenAI-compatible ``/openai/v1`` API.
+
+        Azure's v1 API is OpenAI wire-compatible and authenticates the API key as a
+        Bearer token, so models deployed there (e.g. ``Kimi-K2.5``) reuse the same
+        :class:`OpenAICompatibleLLM` adapter.  Reads ``AZURE_OPENAI_ENDPOINT``,
+        ``AZURE_OPENAI_DEPLOYMENT`` and ``AZURE_OPENAI_API_KEY`` from the environment
+        when the matching argument is not supplied.
+        """
+
+        endpoint = endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+        if not endpoint:
+            raise RuntimeError(
+                "Set AZURE_OPENAI_ENDPOINT (e.g. https://<resource>.openai.azure.com) "
+                "or pass --base-url for the Azure OpenAI-compatible adapter."
+            )
+        api_key = api_key or os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+        if not api_key:
+            raise RuntimeError("Set AZURE_OPENAI_API_KEY (or OPENAI_API_KEY) for the Azure OpenAI-compatible adapter.")
+        deployment = model or os.environ.get("AZURE_OPENAI_DEPLOYMENT") or os.environ.get("AZURE_OPENAI_MODEL", "Kimi-K2.5")
+        return cls(
+            base_url=cls._azure_v1_base_url(endpoint),
+            model=deployment,
+            api_key=api_key,
+            **overrides,
+        )
+
 
 class OpenAICompatibleLLM:
     """Minimal OpenAI-compatible Chat Completions client with retry and JSON repair.

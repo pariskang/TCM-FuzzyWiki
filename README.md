@@ -161,12 +161,13 @@ tcm-fuzzywiki build \
 
 Azure 模式下，LLM 仍然只能抽取 observation；证候隶属度、规则激活、聚合与 Wiki 结果由 deterministic pipeline 复算。
 
-## MiniMax-M3 / OpenAI / Anthropic LLM 与断点续跑构建
+## MiniMax-M3 / OpenAI / Anthropic / Azure LLM 与断点续跑构建
 
-针对大规模古籍抽取（Colab/服务器长任务、限流、断线），`build-llm` 提供多并发 + chunk 级断点续跑，并支持两种 MiniMax-M3 接入协议：
+针对大规模古籍抽取（Colab/服务器长任务、限流、断线），`build-llm` 提供多并发 + chunk 级断点续跑，并支持三种接入协议：
 
 - `--provider openai`（默认）：OpenAI-compatible，base URL 默认 `https://api.minimaxi.com/v1`。
 - `--provider anthropic`：Anthropic Messages 协议，base URL 默认 `https://api.minimaxi.com/anthropic`；安装 `anthropic` SDK 时自动走 SDK，否则用内置 urllib 适配器（零硬依赖）。
+- `--provider azure`：Azure OpenAI 兼容的 `/openai/v1` 接口（如 **Kimi-K2.5** 部署）。Azure v1 API 与 OpenAI 同构、用 Bearer 鉴权，复用同一适配器；**部署名即模型名**（`--model Kimi-K2.5`），MiniMax 专属的 `thinking` 字段会自动忽略。
 
 开箱即用的 Colab notebook：[`colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb`](colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb)（挂载 Drive → clone+install → `normalize-input` → `build-llm`，断线重跑同一 cell 即续跑）。
 
@@ -206,6 +207,38 @@ tcm-fuzzywiki build-llm \
   --config configs/tcm_fuzzywiki.yaml \
   --output build/llm_wiki \
   --provider anthropic --model MiniMax-M3 --workers 4
+```
+
+接入 Azure Kimi-K2.5（OpenAI 兼容 `/openai/v1`，Bearer 鉴权，部署名即模型名）：
+
+```bash
+# endpoint 填资源根地址即可，适配器会自动补 /openai/v1
+export AZURE_OPENAI_ENDPOINT='https://<resource>.openai.azure.com'
+export AZURE_OPENAI_DEPLOYMENT='Kimi-K2.5'
+export AZURE_OPENAI_API_KEY='<your-api-key>'
+
+tcm-fuzzywiki build-llm \
+  --input build/input/chapters.normalized.csv \
+  --config configs/tcm_fuzzywiki.yaml \
+  --output build/llm_wiki \
+  --provider azure --model Kimi-K2.5 --workers 4
+# 也可不用环境变量、直接 --base-url https://<resource>.openai.azure.com 传 endpoint
+```
+
+等价的原生 OpenAI SDK 调用（与本仓库适配器走同一 `/openai/v1/chat/completions` 接口）：
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://<resource>.openai.azure.com/openai/v1",
+    api_key="<your-api-key>",
+)
+completion = client.chat.completions.create(
+    model="Kimi-K2.5",
+    messages=[{"role": "user", "content": "What is the capital of France?"}],
+)
+print(completion.choices[0].message)
 ```
 
 断点续跑语义（chunk 级，而非 source 级）：
