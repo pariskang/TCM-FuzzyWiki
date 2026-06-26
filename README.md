@@ -209,20 +209,20 @@ tcm-fuzzywiki build-llm \
   --provider anthropic --model MiniMax-M3 --workers 4
 ```
 
-接入 Azure Kimi-K2.5（OpenAI 兼容 `/openai/v1`，Bearer 鉴权，部署名即模型名）：
+接入 Azure Kimi-K2.6（OpenAI 兼容 `/openai/v1`，Bearer 鉴权，部署名即模型名）：
 
 ```bash
-# endpoint 填资源根地址即可，适配器会自动补 /openai/v1
-export AZURE_OPENAI_ENDPOINT='https://<resource>.openai.azure.com'
-export AZURE_OPENAI_DEPLOYMENT='Kimi-K2.5'
+# endpoint 两种写法都行：资源根地址（适配器自动补 /openai/v1），或已带 /openai/v1 的完整地址
+export AZURE_OPENAI_ENDPOINT='https://foste-mqufb5uv-swedencentral.cognitiveservices.azure.com/openai/v1'
+export AZURE_OPENAI_DEPLOYMENT='Kimi-K2.6'
 export AZURE_OPENAI_API_KEY='<your-api-key>'
 
 tcm-fuzzywiki build-llm \
   --input build/input/chapters.normalized.csv \
   --config configs/tcm_fuzzywiki.yaml \
   --output build/llm_wiki \
-  --provider azure --model Kimi-K2.5 --workers 4
-# 也可不用环境变量、直接 --base-url https://<resource>.openai.azure.com 传 endpoint
+  --provider azure --model Kimi-K2.6 --workers 4
+# 也可不用环境变量、直接 --base-url '<endpoint>' 传 endpoint
 ```
 
 等价的原生 OpenAI SDK 调用（与本仓库适配器走同一 `/openai/v1/chat/completions` 接口）：
@@ -231,11 +231,11 @@ tcm-fuzzywiki build-llm \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://<resource>.openai.azure.com/openai/v1",
+    base_url="https://foste-mqufb5uv-swedencentral.cognitiveservices.azure.com/openai/v1",
     api_key="<your-api-key>",
 )
 completion = client.chat.completions.create(
-    model="Kimi-K2.5",
+    model="Kimi-K2.6",
     messages=[{"role": "user", "content": "What is the capital of France?"}],
 )
 print(completion.choices[0].message)

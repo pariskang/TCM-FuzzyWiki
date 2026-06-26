@@ -25,6 +25,13 @@ except ImportError:  # pragma: no cover - depends on optional environment packag
 SMALL_SAMPLE_SOURCE_THRESHOLD = 30
 DEFAULT_TOP_K_PATTERNS = 1000
 DEFAULT_MAX_SIZE = 3
+# Safety backstop for ``max_size: 0`` (auto/unlimited). Apriori already stops at
+# the deepest support-frequent level (``if not current: break``) and each level is
+# bounded by max_pair_candidates / max_join_candidates, so this ceiling only guards
+# against pathological inputs (e.g. a single source listing dozens of identical
+# items at very low min_support). 12-item co-occurrence patterns are already extreme
+# for TCM corpora, so the natural support break almost always fires far sooner.
+ABSOLUTE_MAX_SIZE = 12
 DEFAULT_MAX_SOURCE_IDS_PER_PATTERN = 100
 _EPSILON = 1e-12
 Tidset = int
@@ -65,7 +72,11 @@ def mine_candidate_patterns(
     """
 
     filters = config.get("candidate_pattern_filter", {})
-    max_size = max(2, int(filters.get("max_size", max_size or DEFAULT_MAX_SIZE)))
+    # max_size <= 0 means "auto/unlimited": mine itemsets up to the deepest level
+    # that still clears min_support, capped by ABSOLUTE_MAX_SIZE as a safety
+    # backstop. Per-level explosion is bounded by max_pair/join_candidates below.
+    configured_max_size = int(filters.get("max_size", max_size or DEFAULT_MAX_SIZE))
+    max_size = ABSOLUTE_MAX_SIZE if configured_max_size <= 0 else max(2, min(configured_max_size, ABSOLUTE_MAX_SIZE))
     min_support = float(filters.get("min_support", 0.03))
     min_lift = float(filters.get("min_lift", 1.5))
     min_pmi = float(filters.get("min_pmi", 0.5))

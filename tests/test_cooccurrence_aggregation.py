@@ -1,5 +1,5 @@
 from tcm_fuzzywiki.aggregation import aggregate
-from tcm_fuzzywiki.cooccurrence import mine_candidate_patterns
+from tcm_fuzzywiki.cooccurrence import ABSOLUTE_MAX_SIZE, mine_candidate_patterns
 from tcm_fuzzywiki.models import EvidenceQuality, FuzzyRule, InferenceResult, Observation, RuleAntecedent, SourceUnit
 
 
@@ -63,6 +63,33 @@ def test_candidate_mining_does_not_prune_larger_itemsets_by_pair_lift():
     )
 
     assert any(pattern.observations == ("item:a", "item:b", "item:c") for pattern in patterns)
+
+
+def test_max_size_zero_mines_beyond_triples_and_respects_safety_ceiling():
+    # 5 items co-occur in every source: with max_size=0 (auto) the miner should
+    # discover the size-4 and size-5 itemsets that a fixed max_size=3 would miss.
+    sources = [SourceUnit(f"SRC_{idx:03d}", "Book", tradition_id=f"trad_{idx % 3}") for idx in range(30)]
+    items = ["item:a", "item:b", "item:c", "item:d", "item:e"]
+    observations = [
+        Observation(f"OBS_{idx}_{j}", src.source_id, "item", item, item, 0.9, item, "mapped")
+        for idx, src in enumerate(sources)
+        for j, item in enumerate(items)
+    ]
+    filt = {
+        "min_support": 0.1,
+        "min_source_count": 5,
+        "min_tradition_count": 1,
+        "min_lift": 0.1,
+        "min_pmi": -10,
+        "fisher_p_max": None,
+    }
+    patterns = mine_candidate_patterns(observations, sources, {"candidate_pattern_filter": {"max_size": 0, **filt}})
+    sizes = {pattern.size for pattern in patterns}
+    assert max(sizes) >= 4  # would be capped at 3 before
+    assert max(sizes) <= ABSOLUTE_MAX_SIZE  # safety backstop holds (here 5 distinct items)
+
+    capped = mine_candidate_patterns(observations, sources, {"candidate_pattern_filter": {"max_size": 3, **filt}})
+    assert max(pattern.size for pattern in capped) == 3  # explicit positive cap still honoured
 
 
 def test_candidate_pattern_source_ids_are_truncated_with_summary():
