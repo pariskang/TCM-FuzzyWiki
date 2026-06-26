@@ -74,3 +74,26 @@ def test_azure_config_requires_endpoint(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "k")
     with pytest.raises(RuntimeError):
         OpenAICompatibleConfig.from_azure()
+
+
+def test_poe_config_defaults_to_gpt54_and_poe_base_url():
+    config = OpenAICompatibleConfig.from_poe(api_key="poe-key")
+    assert config.base_url == "https://api.poe.com/v1"
+    assert config.model == "gpt-5.4"
+    assert config.api_key == "poe-key"
+
+
+def test_poe_config_reads_environment(monkeypatch):
+    monkeypatch.setenv("POE_API_KEY", "env-poe")
+    monkeypatch.setenv("POE_MODEL", "gpt-5.4")
+    config = OpenAICompatibleConfig.from_poe()
+    assert config.api_key == "env-poe"
+    assert config.model == "gpt-5.4"
+    assert config.base_url + "/chat/completions" == "https://api.poe.com/v1/chat/completions"
+
+
+def test_poe_config_requires_api_key(monkeypatch):
+    monkeypatch.delenv("POE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError):
+        OpenAICompatibleConfig.from_poe()

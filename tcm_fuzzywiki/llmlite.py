@@ -279,6 +279,32 @@ class OpenAICompatibleConfig:
             **overrides,
         )
 
+    @classmethod
+    def from_poe(
+        cls,
+        model: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        **overrides: Any,
+    ) -> "OpenAICompatibleConfig":
+        """Build a config for Poe's OpenAI-compatible API (``https://api.poe.com/v1``).
+
+        Poe exposes an OpenAI wire-compatible Chat Completions endpoint with Bearer
+        auth, so any Poe-hosted model (default ``gpt-5.4``) reuses the same
+        :class:`OpenAICompatibleLLM` adapter.  Reads ``POE_API_KEY`` (falling back to
+        ``OPENAI_API_KEY``) and ``POE_MODEL`` from the environment when not supplied.
+        """
+
+        api_key = api_key or os.environ.get("POE_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+        if not api_key:
+            raise RuntimeError("Set POE_API_KEY (or OPENAI_API_KEY) for the Poe OpenAI-compatible adapter.")
+        return cls(
+            base_url=(base_url or os.environ.get("POE_BASE_URL", "https://api.poe.com/v1")).rstrip("/"),
+            model=model or os.environ.get("POE_MODEL", "gpt-5.4"),
+            api_key=api_key,
+            **overrides,
+        )
+
 
 class OpenAICompatibleLLM:
     """Minimal OpenAI-compatible Chat Completions client with retry and JSON repair.

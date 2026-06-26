@@ -47,9 +47,9 @@ def main() -> None:
     build_llm.add_argument("--input", required=True, help="Input .xlsx or .csv chapter table")
     build_llm.add_argument("--config", default="configs/tcm_fuzzywiki.yaml", help="YAML config path")
     build_llm.add_argument("--output", required=True, help="Output directory (also holds extraction/ checkpoints)")
-    build_llm.add_argument("--provider", choices=["openai", "anthropic", "azure"], default="openai", help="LLM wire protocol; openai/anthropic target MiniMax-M3 by default, azure targets an Azure OpenAI-compatible deployment (e.g. Kimi-K2.5)")
-    build_llm.add_argument("--model", default=None, help="Model / Azure deployment name (default env OPENAI_MODEL/ANTHROPIC_MODEL/AZURE_OPENAI_DEPLOYMENT or MiniMax-M3)")
-    build_llm.add_argument("--base-url", default=None, help="Base URL / Azure endpoint (default MiniMax: /v1 for openai, /anthropic for anthropic; for azure use https://<resource>.openai.azure.com or set AZURE_OPENAI_ENDPOINT)")
+    build_llm.add_argument("--provider", choices=["openai", "anthropic", "azure", "poe"], default="openai", help="LLM wire protocol; openai/anthropic target MiniMax-M3 by default, azure targets an Azure OpenAI-compatible deployment (e.g. Kimi-K2.5), poe targets Poe's OpenAI-compatible API (e.g. gpt-5.4)")
+    build_llm.add_argument("--model", default=None, help="Model / deployment name (default env OPENAI_MODEL/ANTHROPIC_MODEL/AZURE_OPENAI_DEPLOYMENT/POE_MODEL, or MiniMax-M3, or Poe gpt-5.4)")
+    build_llm.add_argument("--base-url", default=None, help="Base URL / Azure endpoint (default MiniMax: /v1 for openai, /anthropic for anthropic; azure: https://<resource>.openai.azure.com or AZURE_OPENAI_ENDPOINT; poe: https://api.poe.com/v1)")
     build_llm.add_argument("--temperature", type=float, default=0.0)
     build_llm.add_argument("--max-tokens", type=int, default=3000, help="max_tokens per chunk completion")
     build_llm.add_argument("--thinking", choices=["adaptive", "disabled", "none"], default="disabled", help="MiniMax thinking mode; 'none' omits the field for non-MiniMax servers")
@@ -210,6 +210,22 @@ def _run_build_llm(args: argparse.Namespace) -> dict:
             )
         )
         provider_label, model_label, base_url = "azure_openai_compatible", llm.config.model, llm.config.base_url
+    elif args.provider == "poe":
+        # Poe's OpenAI-compatible API (https://api.poe.com/v1); the MiniMax-only
+        # `thinking` field is never sent.
+        llm = OpenAICompatibleLLM(
+            OpenAICompatibleConfig.from_poe(
+                model=args.model,
+                base_url=args.base_url,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                timeout=args.request_timeout,
+                max_retries=args.max_retries,
+                retry_sleep=args.retry_sleep,
+                use_response_format=args.use_response_format,
+            )
+        )
+        provider_label, model_label, base_url = "poe", llm.config.model, llm.config.base_url
     else:
         extra_body = {} if args.thinking == "none" else {"thinking": {"type": args.thinking}}
         llm = OpenAICompatibleLLM(
