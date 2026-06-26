@@ -26,6 +26,7 @@ import concurrent.futures as futures
 import datetime as _dt
 import hashlib
 import json
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -273,6 +274,122 @@ def _verify_or_write_manifest(
     manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+class _ProgressReporter:
+    """Live progress bar for chunk extraction.
+
+    Uses ``tqdm`` when available (renders nicely in both terminals and Colab);
+    otherwise falls back to a throttled single-line ``\\r`` counter on stderr so
+    the core package keeps no hard dependency.  Either way it only *displays*
+    progress — durability comes from the append-only JSONL checkpoint.
+    """
+
+    def __init__(self, total: int, *, skipped: int = 0, enabled: bool = True):
+        self.total = total
+        self.enabled = enabled and total > 0
+        self.done = 0
+        self.ok = 0
+        self.failed = 0
+        self.rows = 0
+        self._bar = None
+        self._last_text = 0.0
+        if not self.enabled:
+            return
+        try:  # pragma: no cover - exercised only when tqdm is installed.
+            from tqdm.auto import tqdm
+
+            self._bar = tqdm(
+                total=total,
+                desc="extract",
+                unit="chunk",
+                dynamic_ncols=True,
+                initial=0,
+            )
+            if skipped:
+                self._bar.set_postfix_str(f"resumed={skipped}", refresh=False)
+        except Exception:
+            self._bar = None
+
+    def update(self, record: dict[str, Any]) -> None:
+        self.done += 1
+        if record.get("status") == "success":
+            self.ok += 1
+            self.rows += int(record.get("n_observations", 0) or 0)
+        else:
+            self.failed += 1
+        if not self.enabled:
+            return
+        if self._bar is not None:  # pragma: no cover - requires tqdm.
+            self._bar.set_postfix(ok=self.ok, fail=self.failed, rows=self.rows, refresh=False)
+            self._bar.update(1)
+            return
+        now = time.monotonic()
+        if now - self._last_text >= 0.5 or self.done >= self.total:
+            self._last_text = now
+            pct = (self.done / self.total * 100.0) if self.total else 100.0
+            end = "\n" if self.done >= self.total else ""
+            print(
+                f"\r[extract] {self.done}/{self.total} ({pct:5.1f}%) ok={self.ok} fail={self.failed} rows={self.rows}",
+                end=end,
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def close(self) -> None:
+        if self._bar is not None:  # pragma: no cover - requires tqdm.
+            self._bar.close()
+
+
+def _write_progress_json(
+    ext_dir: Path,
+    *,
+    total_chunks: int,
+    skipped: int,
+    completed: int,
+    pending: int,
+    failed: int,
+    observation_count: int,
+    phase: str,
+) -> None:
+    processed = skipped + completed
+    pct = round(processed / total_chunks * 100.0, 2) if total_chunks else 100.0
+    write_text(
+        ext_dir / "progress.json",
+        json.dumps(
+            {
+                "timestamp": _now_iso(),
+                "phase": phase,
+                "total_chunks": total_chunks,
+                "skipped_resumed": skipped,
+                "completed_this_run": completed,
+                "pending_this_run": pending,
+                "failed_this_run": failed,
+                "processed_chunks": processed,
+                "percent_complete": pct,
+                "observation_count": observation_count,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+    )
+
+
+def _write_partial_outputs(
+    ext_dir: Path,
+    sources: list[SourceUnit],
+    records: dict[tuple[str, int], dict[str, Any]],
+    config: dict[str, Any],
+) -> int:
+    """Assemble current records and persist partial observations/progress CSVs.
+
+    Returns the assembled observation count so callers can surface it live.
+    """
+
+    observations, progress_rows = _assemble_observations(sources, records, config)
+    write_csv(ext_dir / "observations_checkpoint.csv", observations)
+    write_csv(ext_dir / "source_progress.csv", progress_rows)
+    return len(observations)
+
+
 def extract_resumable(
     sources: list[SourceUnit],
     config: dict[str, Any],
@@ -287,6 +404,8 @@ def extract_resumable(
     input_sha256: str = "",
     model_label: str = "",
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    show_progress: bool = False,
+    save_interval_sec: float = 20.0,
 ) -> tuple[list[Observation], dict[str, Any]]:
     """Extract observations with chunk-level checkpoints; safe to interrupt and rerun.
 
@@ -328,12 +447,24 @@ def extract_resumable(
     writer = _CheckpointWriter(chunks_path)
     completed = 0
     failed_now = 0
+    reporter = _ProgressReporter(len(pending), skipped=skipped, enabled=show_progress)
+    running_observations = sum(int(r.get("n_observations", 0) or 0) for r in records.values() if r.get("status") == "success")
 
-    def _emit_status(extra: str = "") -> None:
+    def _emit_status(extra: str = "", phase: str = "extract") -> None:
         write_text(
             ext_dir / "live_status.txt",
             f"timestamp={_now_iso()}\ntotal_chunks={len(tasks)}\nskipped_resumed={skipped}\n"
             f"completed_this_run={completed}/{len(pending)}\nfailed_this_run={failed_now}\n{extra}",
+        )
+        _write_progress_json(
+            ext_dir,
+            total_chunks=len(tasks),
+            skipped=skipped,
+            completed=completed,
+            pending=len(pending),
+            failed=failed_now,
+            observation_count=running_observations,
+            phase=phase,
         )
 
     def _process(task: ChunkTask) -> dict[str, Any]:
@@ -372,7 +503,9 @@ def extract_resumable(
             )
         return record
 
+    _emit_status("phase=start")
     if pending:
+        last_save = time.monotonic()
         with futures.ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
             future_map = {executor.submit(_process, task): task for task in pending}
             for future in futures.as_completed(future_map):
@@ -382,16 +515,29 @@ def extract_resumable(
                     records[key] = record
                 writer.append(record)
                 completed += 1
-                if record["status"] != "success":
+                if record["status"] == "success":
+                    running_observations += int(record.get("n_observations", 0) or 0)
+                else:
                     failed_now += 1
+                reporter.update(record)
                 _emit_status(f"last_chunk={key[0]}#{key[1]} last_status={record['status']}")
+                # Real-time save: periodically flush assembled observations so
+                # partial results are durable and inspectable mid-run (throttled
+                # by time to keep assembly cost bounded on very large corpora).
+                now = time.monotonic()
+                if save_interval_sec > 0 and now - last_save >= save_interval_sec:
+                    last_save = now
+                    running_observations = _write_partial_outputs(ext_dir, sources, records, config)
                 if progress_callback is not None:
                     progress_callback(record)
-    _emit_status("phase=assembly")
+    reporter.close()
+    _emit_status("phase=assembly", phase="assembly")
 
     observations, progress_rows = _assemble_observations(sources, records, config)
     write_csv(ext_dir / "observations_checkpoint.csv", observations)
     write_csv(ext_dir / "source_progress.csv", progress_rows)
+    running_observations = len(observations)
+    _emit_status("phase=done", phase="done")
     error_rows = [
         {k: v for k, v in record.items() if k != "observations"}
         for record in records.values()

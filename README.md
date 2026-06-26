@@ -259,10 +259,13 @@ checkpoint 产物（`<output>/extraction/`）：
 |---|---|
 | `extraction_chunks.jsonl` | 每 chunk 一行的原始抽取记录（含 usage、错误、chunk SHA256）。 |
 | `extraction_manifest.json` | 输入 SHA256 与切块参数，续跑一致性校验。 |
-| `observations_checkpoint.csv` | 汇编后的 observation 快照。 |
+| `observations_checkpoint.csv` | 汇编后的 observation 快照；抽取过程中每 `--save-interval` 秒（默认 20s）实时刷新一次。 |
 | `source_progress.csv` | 逐来源状态：success / partial_success / error。 |
 | `llm_usage.csv` / `llm_errors.csv` | token 用量与失败明细。 |
-| `live_status.txt` | 实时进度（适合 Colab 中监视）。 |
+| `live_status.txt` | 实时文本状态（适合 Colab 中监视）。 |
+| `progress.json` | 结构化实时进度：`percent_complete`、已处理/总块数、成功/失败、observation 计数，供脚本/Colab 轮询渲染进度条。 |
+
+**实时进度条 + 实时保存**：`build-llm` 默认显示进度条（安装 `tqdm` 时为图形进度条，否则回退为 stderr 单行文本），展示已完成/总块数、成功/失败与抽到的条数；同时每 `--save-interval` 秒把已抽 observation 落盘并刷新 `progress.json`。`--no-progress` 关闭进度条，`--save-interval 0` 关闭周期性落盘（断点 JSONL 仍逐 chunk 实时写入，永不丢进度）。
 
 Colab 全流程即：挂载 Drive → `git clone` + `pip install -e .` → `normalize-input` → `build-llm --output /content/drive/.../run_x`；断线后重新运行同一 `build-llm` cell 即可续跑。
 
