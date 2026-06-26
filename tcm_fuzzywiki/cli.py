@@ -63,6 +63,8 @@ def main() -> None:
     build_llm.add_argument("--retry-sleep", type=float, default=4.0)
     build_llm.add_argument("--limit", type=int, default=0, help="Process only the first N sources (smoke test)")
     build_llm.add_argument("--no-resume", action="store_true", help="Discard extraction checkpoints and start fresh")
+    build_llm.add_argument("--no-progress", action="store_true", help="Disable the live progress bar (enabled by default; uses tqdm if installed, else a text fallback)")
+    build_llm.add_argument("--save-interval", type=float, default=20.0, help="Seconds between real-time partial saves of observations_checkpoint.csv (0 disables periodic saves)")
     build_llm.add_argument("--strict", action="store_true", help="Exit non-zero if any chunk still failed after retries, before downstream build")
     build_llm.add_argument("--rules-csv", help="Optional expert-reviewed rules.csv")
     build_llm.add_argument("--gold-dir", help="Optional directory with expert gold-standard CSV files")
@@ -237,6 +239,8 @@ def _run_build_llm(args: argparse.Namespace) -> dict:
         resume=not args.no_resume,
         input_sha256=file_sha256(args.input),
         model_label=llm.config.model,
+        show_progress=not args.no_progress,
+        save_interval_sec=args.save_interval,
     )
     print(json.dumps({"extraction_report": report}, ensure_ascii=False, indent=2))
     if args.strict and report["chunks_failed"] > 0:

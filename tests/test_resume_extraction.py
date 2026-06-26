@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,25 @@ def test_chunk_prompt_signals_unlimited_when_cap_is_zero():
     capped = build_chunk_prompt(unit, "原文", 1, 1, 12)
     assert "不限制输出条数" in unlimited and "最多输出" not in unlimited
     assert "本块最多输出 12 条" in capped
+
+
+def test_progress_json_and_partial_save_are_written(tmp_path: Path):
+    config = load_yaml("configs/tcm_fuzzywiki.yaml")
+    sources = _sources()
+    llm = FlakyLLM(fail_once=set())
+
+    _obs, report = extract_resumable(
+        sources, config, tmp_path, llm, chunk_chars=120, chunk_overlap=10, workers=2,
+        input_sha256="HASH1", show_progress=True, save_interval_sec=0,
+    )
+    progress = json.loads((tmp_path / "extraction" / "progress.json").read_text())
+    assert progress["total_chunks"] == report["total_chunks"]
+    assert progress["processed_chunks"] == progress["total_chunks"]
+    assert progress["percent_complete"] == 100.0
+    assert progress["phase"] == "done"
+    assert progress["failed_this_run"] == 0
+    # Real-time partial save leaves an inspectable observations CSV mid/post run.
+    assert (tmp_path / "extraction" / "observations_checkpoint.csv").exists()
 
 
 def test_split_text_makes_forward_progress_on_pathological_overlap():
