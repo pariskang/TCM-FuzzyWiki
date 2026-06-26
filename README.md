@@ -209,20 +209,20 @@ tcm-fuzzywiki build-llm \
   --provider anthropic --model MiniMax-M3 --workers 4
 ```
 
-接入 Azure Kimi-K2.5（OpenAI 兼容 `/openai/v1`，Bearer 鉴权，部署名即模型名）：
+接入 Azure Kimi-K2.6（OpenAI 兼容 `/openai/v1`，Bearer 鉴权，部署名即模型名）：
 
 ```bash
-# endpoint 填资源根地址即可，适配器会自动补 /openai/v1
-export AZURE_OPENAI_ENDPOINT='https://<resource>.openai.azure.com'
-export AZURE_OPENAI_DEPLOYMENT='Kimi-K2.5'
+# endpoint 两种写法都行：资源根地址（适配器自动补 /openai/v1），或已带 /openai/v1 的完整地址
+export AZURE_OPENAI_ENDPOINT='https://foste-mqufb5uv-swedencentral.cognitiveservices.azure.com/openai/v1'
+export AZURE_OPENAI_DEPLOYMENT='Kimi-K2.6'
 export AZURE_OPENAI_API_KEY='<your-api-key>'
 
 tcm-fuzzywiki build-llm \
   --input build/input/chapters.normalized.csv \
   --config configs/tcm_fuzzywiki.yaml \
   --output build/llm_wiki \
-  --provider azure --model Kimi-K2.5 --workers 4
-# 也可不用环境变量、直接 --base-url https://<resource>.openai.azure.com 传 endpoint
+  --provider azure --model Kimi-K2.6 --workers 4
+# 也可不用环境变量、直接 --base-url '<endpoint>' 传 endpoint
 ```
 
 等价的原生 OpenAI SDK 调用（与本仓库适配器走同一 `/openai/v1/chat/completions` 接口）：
@@ -231,11 +231,11 @@ tcm-fuzzywiki build-llm \
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://<resource>.openai.azure.com/openai/v1",
+    base_url="https://foste-mqufb5uv-swedencentral.cognitiveservices.azure.com/openai/v1",
     api_key="<your-api-key>",
 )
 completion = client.chat.completions.create(
-    model="Kimi-K2.5",
+    model="Kimi-K2.6",
     messages=[{"role": "user", "content": "What is the capital of France?"}],
 )
 print(completion.choices[0].message)
@@ -251,6 +251,7 @@ print(completion.choices[0].message)
 - 抽取完成后复用同一个 `run_pipeline`：membership、共现、规则、推理、Mamdani、聚合、网络、Wiki、validation、audit、manifest 全量产出，与 `build`/`run-demo` 永远同步。
 - `--strict` 让任何 chunk 仍失败时以非零退出（默认仍生成产物并在 `source_progress.csv` 标注 `partial_success/error`）。
 - LLM 输出经鲁棒解析（剥离 `<think>`/Markdown 围栏、平衡大括号提取、尾逗号修复；安装可选 `json-repair` 后进一步增强）。
+- **不限制实体/关系数量（默认）**：`--max-observations-per-chunk 0`（默认）让模型穷尽抽取每块中所有有证据的 observation，prompt 不再要求自我截断；下游共现关系挖掘的 `candidate_pattern_filter.top_k_patterns: 0` 同样保留**全部**通过统计显著性过滤的候选关系，不再截断为前 N 条。需要控量时把二者改成正整数即可（如 `--max-observations-per-chunk 12`、`top_k_patterns: 1000`）。
 
 checkpoint 产物（`<output>/extraction/`）：
 

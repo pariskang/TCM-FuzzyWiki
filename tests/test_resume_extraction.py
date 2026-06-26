@@ -5,7 +5,13 @@ import pytest
 from tcm_fuzzywiki.config import load_yaml
 from tcm_fuzzywiki.models import SourceUnit
 from tcm_fuzzywiki.pipeline import run_pipeline
-from tcm_fuzzywiki.resume import extract_resumable, load_chunk_records, split_text
+from tcm_fuzzywiki.resume import (
+    build_chunk_prompt,
+    coerce_observation_rows,
+    extract_resumable,
+    load_chunk_records,
+    split_text,
+)
 
 
 class FlakyLLM:
@@ -42,6 +48,20 @@ def _sources() -> list[SourceUnit]:
         SourceUnit(source_id="SRC_A", book_name="书甲", original_text=text, tradition_id="t1"),
         SourceUnit(source_id="SRC_B", book_name="书乙", original_text=text, tradition_id="t2"),
     ]
+
+
+def test_unlimited_observations_keep_every_row():
+    payload = {"observations": [{"feature": "symptom", "feature_value": f"v{i}"} for i in range(25)]}
+    assert len(coerce_observation_rows(payload, 0)) == 25  # 0 = no cap, keep all
+    assert len(coerce_observation_rows(payload, 12)) == 12  # explicit cap still honoured
+
+
+def test_chunk_prompt_signals_unlimited_when_cap_is_zero():
+    unit = SourceUnit(source_id="S1", book_name="b", original_text="x")
+    unlimited = build_chunk_prompt(unit, "原文", 1, 1, 0)
+    capped = build_chunk_prompt(unit, "原文", 1, 1, 12)
+    assert "不限制输出条数" in unlimited and "最多输出" not in unlimited
+    assert "本块最多输出 12 条" in capped
 
 
 def test_split_text_makes_forward_progress_on_pathological_overlap():

@@ -39,14 +39,14 @@ aggregation:
     warm_disease_tradition: 1.0
 
 candidate_pattern_filter:
-  max_size: 3
+  max_size: 0               # 0 = 自动/不限制关系元数：挖到 min_support 自然收敛为止（受 ABSOLUTE_MAX_SIZE=12 安全上限 + max_pair/join_candidates 防爆炸约束）；设正数则固定为该元数
   min_support: 0.001
   min_source_count: 20
   min_tradition_count: 3
   min_lift: 2.0
   min_pmi: 1.0
   fisher_p_max: 0.05
-  top_k_patterns: 1000
+  top_k_patterns: 0          # 0 = 不限制候选关系数量，保留所有通过统计显著性过滤的共现模式
   max_source_ids_per_pattern: 100
   max_pair_candidates: 200000
   max_join_candidates: 100000
