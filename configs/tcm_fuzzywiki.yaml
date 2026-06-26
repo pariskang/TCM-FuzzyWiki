@@ -46,7 +46,7 @@ candidate_pattern_filter:
   min_lift: 2.0
   min_pmi: 1.0
   fisher_p_max: 0.05
-  top_k_patterns: 1000
+  top_k_patterns: 0          # 0 = 不限制候选关系数量，保留所有通过统计显著性过滤的共现模式
   max_source_ids_per_pattern: 100
   max_pair_candidates: 200000
   max_join_candidates: 100000

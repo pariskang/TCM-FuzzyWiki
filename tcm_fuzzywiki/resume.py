@@ -147,12 +147,21 @@ def build_chunk_prompt(
     chunk_total: int,
     max_observations_per_chunk: int,
 ) -> str:
+    if max_observations_per_chunk and max_observations_per_chunk > 0:
+        budget_line = (
+            f"本块最多输出 {max_observations_per_chunk} 条，优先选择医学信息密度最高、可映射性最强的条目。\n"
+        )
+    else:
+        budget_line = (
+            "不限制输出条数：穷尽抽取原文片段中所有能直接找到证据的 observation，"
+            "不要为了控制数量而遗漏任何实体或关系。\n"
+        )
     return (
         f"{FEATURE_HINTS}\n"
         "你正在为 TCM-FuzzyWiki 构建 observation-first 数据。\n"
         "只抽取原文片段中能直接找到证据的 observation，不要抽象推理，不要输出证候诊断结论。\n"
         "每条 observation 必须满足：feature_value 是原文中出现或紧贴原文的短语；evidence_text 是原文证据短句。\n"
-        f"本块最多输出 {max_observations_per_chunk} 条，优先选择医学信息密度最高、可映射性最强的条目。\n"
+        f"{budget_line}"
         "严格只返回 JSON 对象，不要 Markdown，不要解释，不要 <think>。\n"
         'JSON schema: {"observations":[{"feature":"...","feature_value":"...","evidence_text":"...","extraction_confidence":0.0}]}\n\n'
         f"Source ID: {unit.source_id}\n"
@@ -272,7 +281,7 @@ def extract_resumable(
     *,
     chunk_chars: int = 1800,
     chunk_overlap: int = 80,
-    max_observations_per_chunk: int = 12,
+    max_observations_per_chunk: int = 0,
     workers: int = 3,
     resume: bool = True,
     input_sha256: str = "",

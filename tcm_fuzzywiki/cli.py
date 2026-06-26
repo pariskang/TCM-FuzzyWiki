@@ -56,7 +56,7 @@ def main() -> None:
     build_llm.add_argument("--use-response-format", action="store_true", help="Send response_format json_object (auto-fallback if rejected)")
     build_llm.add_argument("--chunk-chars", type=int, default=1800)
     build_llm.add_argument("--chunk-overlap", type=int, default=80)
-    build_llm.add_argument("--max-observations-per-chunk", type=int, default=12)
+    build_llm.add_argument("--max-observations-per-chunk", type=int, default=0, help="Per-chunk observation cap; 0 (default) = unlimited, the model exhaustively extracts every entity/relation it finds")
     build_llm.add_argument("--workers", type=int, default=3)
     build_llm.add_argument("--request-timeout", type=float, default=180.0)
     build_llm.add_argument("--max-retries", type=int, default=4)

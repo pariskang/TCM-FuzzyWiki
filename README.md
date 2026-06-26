@@ -251,6 +251,7 @@ print(completion.choices[0].message)
 - 抽取完成后复用同一个 `run_pipeline`：membership、共现、规则、推理、Mamdani、聚合、网络、Wiki、validation、audit、manifest 全量产出，与 `build`/`run-demo` 永远同步。
 - `--strict` 让任何 chunk 仍失败时以非零退出（默认仍生成产物并在 `source_progress.csv` 标注 `partial_success/error`）。
 - LLM 输出经鲁棒解析（剥离 `<think>`/Markdown 围栏、平衡大括号提取、尾逗号修复；安装可选 `json-repair` 后进一步增强）。
+- **不限制实体/关系数量（默认）**：`--max-observations-per-chunk 0`（默认）让模型穷尽抽取每块中所有有证据的 observation，prompt 不再要求自我截断；下游共现关系挖掘的 `candidate_pattern_filter.top_k_patterns: 0` 同样保留**全部**通过统计显著性过滤的候选关系，不再截断为前 N 条。需要控量时把二者改成正整数即可（如 `--max-observations-per-chunk 12`、`top_k_patterns: 1000`）。
 
 checkpoint 产物（`<output>/extraction/`）：
 
