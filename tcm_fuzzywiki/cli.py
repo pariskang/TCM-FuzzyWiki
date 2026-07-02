@@ -142,8 +142,15 @@ def main() -> None:
         print(readiness_markdown(findings))
         return
     if args.command == "run-demo":
-        input_path = Path("examples/bootstrap_chapters.csv")
-        summary = run_pipeline(input_path, "configs/tcm_fuzzywiki.yaml", args.output)
+        # Resolve the bundled demo assets relative to the repository checkout the
+        # package was installed from, so run-demo works from any working directory.
+        repo_root = Path(__file__).resolve().parent.parent
+        input_path = repo_root / "examples" / "bootstrap_chapters.csv"
+        config_path = repo_root / "configs" / "tcm_fuzzywiki.yaml"
+        if not input_path.exists() or not config_path.exists():
+            input_path = Path("examples/bootstrap_chapters.csv")
+            config_path = Path("configs/tcm_fuzzywiki.yaml")
+        summary = run_pipeline(input_path, config_path, args.output)
     else:
         summary = run_pipeline(args.input, args.config, args.output, args.azure_llm, args.rules_csv, args.gold_dir)
     print(json.dumps(summary, ensure_ascii=False, indent=2))

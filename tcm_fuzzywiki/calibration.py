@@ -2,8 +2,9 @@
 
 The V5.0 method starts from bootstrap priors and then calibrates memberships with
 expert scores.  This module closes that loop by reading expert membership scores,
-computing median calibrated memberships and an ICC-like one-way reliability
-estimate, and writing an updated YAML config plus a calibration report.
+computing median calibrated memberships, a per-term expert agreement proxy, and a
+panel-level one-way ICC(1,1) across all scored terms, then writing an updated
+YAML config plus a calibration report.
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ def calibrate_config_from_experts(
     linguistic_values = calibrated.setdefault("linguistic_values", {})
     report: list[dict[str, Any]] = []
 
+    panel = panel_icc(frame)
     grouped = frame.groupby(["term", "variable", "fuzzy_set"], dropna=False)
     for (term, variable, fuzzy_set), group in grouped:
         scores = [clamp01(score) for score in group["score"].tolist()]
@@ -52,7 +54,7 @@ def calibrate_config_from_experts(
         mean = float(np.mean(scores))
         p5 = float(np.percentile(scores, 5))
         p95 = float(np.percentile(scores, 95))
-        icc = _one_way_icc(group)
+        icc = _agreement_proxy(group)
         status = "expert_calibrated" if icc is None or icc >= 0.75 else "expert_calibrated_low_icc"
 
         term_entry = linguistic_values.setdefault(str(term), {"feature": "expert_calibrated", "maps_to": {}})
@@ -66,6 +68,8 @@ def calibrate_config_from_experts(
         mapping["expert_p95"] = round(p95, 6)
         mapping["status"] = status
         mapping["icc"] = None if icc is None else round(icc, 6)
+        mapping["icc_type"] = "expert_agreement_proxy"
+        mapping["panel_icc"] = None if panel is None else round(panel, 6)
         mapping["review_status"] = "expert_reviewed"
         mapping["expert_count"] = int(group["expert_id"].nunique())
         mapping["score_count"] = int(len(group))
@@ -80,6 +84,8 @@ def calibrate_config_from_experts(
                 "expert_p5": round(p5, 6),
                 "expert_p95": round(p95, 6),
                 "icc": None if icc is None else round(icc, 6),
+                "icc_type": "expert_agreement_proxy",
+                "panel_icc": None if panel is None else round(panel, 6),
                 "status": status,
                 "expert_count": int(group["expert_id"].nunique()),
                 "score_count": int(len(group)),
@@ -101,33 +107,42 @@ def write_calibrated_config(
         write_csv(report_csv, report)
 
 
-def _one_way_icc(group: pd.DataFrame) -> float | None:
-    """Compute ICC(1,1)-style reliability for term/variable expert scores.
+def _agreement_proxy(group: pd.DataFrame) -> float | None:
+    """Per-term expert agreement proxy in [0, 1].
 
-    A single item with one score per expert has no within-item variance estimate;
-    in that common calibration-review case, return a conservative agreement proxy
-    derived from score dispersion so low agreement still propagates downstream.
+    A single term scored once per expert is one item — a true ICC needs
+    between-item variance and is undefined at this granularity.  Report
+    ``1 - sd / 0.5`` instead (0.5 is the maximum possible standard deviation on
+    [0, 1]) so low agreement still propagates to downstream low-ICC handling.
     """
 
-    experts = sorted(group["expert_id"].astype(str).unique())
-    if len(experts) < 2:
+    if group["expert_id"].astype(str).nunique() < 2:
         return None
     scores = np.array([clamp01(value) for value in group["score"].tolist()], dtype=float)
-    if len(scores) <= len(experts):
-        dispersion = float(np.std(scores, ddof=1)) if len(scores) > 1 else 0.0
-        return clamp01(1.0 - dispersion / 0.5)
+    dispersion = float(np.std(scores, ddof=1)) if len(scores) > 1 else 0.0
+    return clamp01(1.0 - dispersion / 0.5)
 
-    pivot = group.pivot_table(index=group.index, columns="expert_id", values="score", aggfunc="mean")
+
+def panel_icc(frame: pd.DataFrame) -> float | None:
+    """One-way random-effects ICC(1,1) across the whole score table.
+
+    Items are (term, variable, fuzzy_set) combinations, raters are experts.
+    Requires at least 2 complete items and 2 experts; returns None otherwise.
+    """
+
+    pivot = frame.pivot_table(index=["term", "variable", "fuzzy_set"], columns="expert_id", values="score", aggfunc="mean")
     values = pivot.dropna(axis=0, how="any").to_numpy(dtype=float)
-    n, k = values.shape if values.size else (0, 0)
+    if values.ndim != 2 or not values.size:
+        return None
+    n, k = values.shape
     if n < 2 or k < 2:
-        dispersion = float(np.std(scores, ddof=1)) if len(scores) > 1 else 0.0
-        return clamp01(1.0 - dispersion / 0.5)
+        return None
     row_means = values.mean(axis=1)
     grand_mean = values.mean()
     ms_between = k * np.sum((row_means - grand_mean) ** 2) / (n - 1)
     ms_within = np.sum((values - row_means[:, None]) ** 2) / (n * (k - 1))
     denominator = ms_between + (k - 1) * ms_within
     if denominator <= 0:
+        # Both mean squares are zero only when every score is identical: perfect agreement.
         return 1.0
     return clamp01((ms_between - ms_within) / denominator)

@@ -90,10 +90,43 @@ CAPABILITY_AUDIT: tuple[dict[str, str], ...] = (
 )
 
 
-def capability_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
+def _low_icc_capability_override(config: dict[str, Any] | None) -> dict[str, str]:
+    """Resolve the Low-ICC capability status from the actual calibration state.
+
+    The Monte Carlo propagation code is always implemented; what keeps this item
+    an MVP research boundary is that ICC values come from bootstrap or LLM-roleplay
+    priors.  Once every linguistic-value mapping carries human expert calibration
+    (``review_status: expert_reviewed``), the boundary is lifted and the item is
+    reported as ``implemented`` — which also makes the ``formal_ready`` verdict
+    reachable for fully calibrated, gold-evaluated, warning-free builds.
+    """
+
+    if not config:
+        return {}
+    mappings = [
+        mapping
+        for entry in (config.get("linguistic_values") or {}).values()
+        if isinstance(entry, dict)
+        for mapping in (entry.get("maps_to") or {}).values()
+        if isinstance(mapping, dict)
+    ]
+    if mappings and all(str(mapping.get("review_status", "")) == "expert_reviewed" for mapping in mappings):
+        return {
+            "status": "implemented",
+            "evidence": "Monte Carlo p5/p95 intervals use human-expert-calibrated ICC values (review_status=expert_reviewed on all linguistic-value mappings).",
+        }
+    return {
+        "status": "implemented_mvp",
+        "evidence": "Monte Carlo p5/p95 intervals are generated, but ICC values still come from bootstrap or LLM-roleplay priors; run `tcm-fuzzywiki calibrate` with human expert scores to lift this boundary.",
+    }
+
+
+def capability_rows(summary: dict[str, Any], config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in CAPABILITY_AUDIT:
         enriched = dict(row)
+        if enriched["capability"] == "Low-ICC uncertainty propagation":
+            enriched.update(_low_icc_capability_override(config))
         enriched["source_count"] = summary.get("source_count", 0)
         enriched["observation_count"] = summary.get("observation_count", 0)
         enriched["coverage"] = summary.get("coverage", 0.0)
@@ -101,9 +134,10 @@ def capability_rows(summary: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def capability_markdown(summary: dict[str, Any]) -> str:
+def capability_markdown(summary: dict[str, Any], config: dict[str, Any] | None = None) -> str:
     table = "\n".join(
-        f"| {row['capability']} | {row['status']} | {row['evidence']} |" for row in CAPABILITY_AUDIT
+        f"| {row['capability']} | {row['status']} | {row['evidence']} |"
+        for row in capability_rows(summary, config)
     )
     return f"""# TCM-FuzzyWiki V5.0 实现审计
 
@@ -128,4 +162,6 @@ def capability_markdown(summary: dict[str, Any]) -> str:
 ## 结论
 
 当前代码已经实现 V5.0 的计算链路、可选 Mamdani 敏感性分析、指标公式与审计模板。凡是依赖真实专家评分、外部本体长期维护、UI 审核系统或金标准评测集的数据输入，仍会在输出中显式标注为 `needs_gold_standard` 或 `implemented_mvp`，避免把 bootstrap 近似误写成已完成实验结论。
+
+说明：本表是能力级声明（附本次运行统计），并非逐项运行时检测；其中「Low-ICC uncertainty propagation」一项按当前配置的专家校准状态动态判定——全部语言变量映射均为 `review_status: expert_reviewed` 时记为 `implemented`，否则保持 `implemented_mvp`。
 """

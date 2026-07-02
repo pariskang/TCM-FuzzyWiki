@@ -35,6 +35,39 @@ def test_aggregation_records_tradition_delta_values():
     assert global_row["delta_values"] == [1.0, 0.5]
 
 
+def test_source_rule_discount_gamma_changes_multi_rule_mu():
+    sources = [SourceUnit("SRC_1", "Book A", tradition_id="trad_a", evidence_quality=EvidenceQuality(1, 1, 1))]
+    rules = [
+        FuzzyRule("RULE_1", "rule1", "seed", [RuleAntecedent("x", "high")], "寒湿痹阻", rule_weight=1.0),
+        FuzzyRule("RULE_2", "rule2", "seed", [RuleAntecedent("y", "high")], "寒湿痹阻", rule_weight=1.0),
+    ]
+    results = [
+        InferenceResult("SRC_1", "RULE_1", "寒湿痹阻", "syndrome", 0.8, ["x.high"], [], "fired"),
+        InferenceResult("SRC_1", "RULE_2", "寒湿痹阻", "syndrome", 0.8, ["y.high"], [], "fired"),
+    ]
+
+    def source_mu(gamma: float) -> float:
+        rows = aggregate(results, sources, rules, {"source_rule_discount_gamma": gamma})
+        return next(row["mu"] for row in rows if row["aggregation_level"] == "source")
+
+    # gamma = 0: rules count as independent evidence -> noisy-or 1 - 0.2 * 0.2.
+    assert source_mu(0.0) == 0.96
+    # A very large gamma treats the rules as fully redundant -> weighted mean.
+    assert abs(source_mu(50.0) - 0.8) < 1e-6
+    # Intermediate gamma interpolates strictly between the two ends.
+    assert 0.8 < source_mu(0.5) < 0.96
+
+
+def test_source_rule_discount_gamma_is_identity_for_single_rule():
+    sources = [SourceUnit("SRC_1", "Book A", tradition_id="trad_a", evidence_quality=EvidenceQuality(1, 1, 1))]
+    rules = [FuzzyRule("RULE_1", "rule1", "seed", [RuleAntecedent("x", "high")], "寒湿痹阻", rule_weight=1.0)]
+    results = [InferenceResult("SRC_1", "RULE_1", "寒湿痹阻", "syndrome", 0.7, ["x.high"], [], "fired")]
+    for gamma in (0.0, 0.5, 2.0):
+        rows = aggregate(results, sources, rules, {"source_rule_discount_gamma": gamma})
+        source_row = next(row for row in rows if row["aggregation_level"] == "source")
+        assert source_row["mu"] == 0.7
+
+
 def test_candidate_mining_does_not_prune_larger_itemsets_by_pair_lift():
     sources = [SourceUnit(f"SRC_{idx:03d}", "Book", tradition_id="trad") for idx in range(100)]
     observations = []

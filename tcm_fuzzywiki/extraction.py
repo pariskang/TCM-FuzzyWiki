@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 from .llmlite import ChatModel
 from .models import Observation, SourceUnit, clamp01
@@ -11,6 +12,62 @@ from .models import Observation, SourceUnit, clamp01
 SYSTEM_PROMPT = """你是 TCM-FuzzyWiki V5.0 的 observation-first 抽取器。只抽取可观察事实，禁止输出证候、病机或诊断结论。返回 JSON 对象：{"observations":[{"feature":"...","feature_value":"...","evidence_text":"...","extraction_confidence":0.0}]}。"""
 
 FEATURE_HINTS = """允许的 feature 示例：pain_location, pain_quality, relieving_factor, aggravating_factor, disease_course, tongue, pulse, symptom, sign, formula, herb, acupoint。"""
+
+ALLOWED_FEATURES = {
+    "symptom",
+    "sign",
+    "tongue",
+    "pulse",
+    "body_part",
+    "pathogen",
+    "trigger",
+    "relieving_factor",
+    "aggravating_factor",
+    "duration",
+    "severity",
+    "pain_location",
+    "pain_quality",
+    "disease_course",
+    "formula",
+    "herb",
+    "acupoint",
+    "method",
+    "mechanism",
+    "other",
+}
+
+
+def coerce_observation_rows(payload: Any, max_rows: int = 0) -> list[dict[str, Any]]:
+    """Validate LLM output rows: whitelist features, drop empty values, clamp confidence.
+
+    Shared by every LLM extraction path (resumable ``build-llm`` and the legacy
+    ``build --azure-llm``) so validation strictness cannot drift between them.
+    """
+
+    rows = payload.get("observations", []) if isinstance(payload, Mapping) else []
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        feature = str(row.get("feature", "symptom")).strip() or "symptom"
+        if feature not in ALLOWED_FEATURES:
+            feature = "other"
+        feature_value = str(row.get("feature_value", "")).strip()
+        if not feature_value:
+            continue
+        out.append(
+            {
+                "feature": feature,
+                "feature_value": feature_value,
+                "evidence_text": str(row.get("evidence_text", "")).strip(),
+                "extraction_confidence": clamp01(row.get("extraction_confidence", 0.5), 0.5),
+            }
+        )
+        if max_rows > 0 and len(out) >= max_rows:
+            break
+    return out
 
 
 class ObservationExtractor:
@@ -35,18 +92,15 @@ class LLMObservationExtractor(ObservationExtractor):
                 f"原文: {unit.original_text or unit.text_punctuated}\n"
             )
             payload = self.llm.complete_json(SYSTEM_PROMPT, prompt)
-            rows = payload.get("observations", []) if isinstance(payload, Mapping) else []
-            for row in rows:
-                if not isinstance(row, Mapping):
-                    continue
+            for row in coerce_observation_rows(payload):
                 observations.append(
                     Observation(
                         observation_id=f"OBS_{next_id:06d}",
                         source_id=unit.source_id,
-                        feature=str(row.get("feature", "symptom")),
-                        feature_value=str(row.get("feature_value", "")),
-                        evidence_text=str(row.get("evidence_text", "")),
-                        extraction_confidence=clamp01(row.get("extraction_confidence", 0.5), 0.5),
+                        feature=row["feature"],
+                        feature_value=row["feature_value"],
+                        evidence_text=row["evidence_text"],
+                        extraction_confidence=row["extraction_confidence"],
                     )
                 )
                 next_id += 1

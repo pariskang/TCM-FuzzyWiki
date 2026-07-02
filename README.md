@@ -6,29 +6,29 @@
 
 > 形式化边界：本项目生成的 μ 值是基于文本证据、语言变量映射、模糊规则和专家校准配置得到的形式化近似结果，不等同于现代临床诊断。
 
-> Colab 一键运行（MiniMax-M3，多并发 + 断点续跑）：[`colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb`](colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb)。上方 Colab 徽章在本 notebook 合并入 `main` 后即可直接打开。合并前预览：在 Colab 中选择「文件 → 打开笔记本 → GitHub」，输入 `pariskang/TCM-FuzzyWiki`，在分支下拉里选 `claude/elegant-mccarthy-p7zg2g`，再选该 notebook（Colab 的 URL 不支持带斜杠的分支名，故需用此方式）。
+> Colab 一键运行（MiniMax-M3，多并发 + 断点续跑）：[`colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb`](colab/TCM_FuzzyWiki_MiniMax_M3_Colab.ipynb)，点击上方 Colab 徽章即可直接打开。
 
 ## 已实现能力
 
 - **XLSX/CSV 导入**：支持一行一个章节，并保留书名、章节、朝代、作者、主题、流派、地域、学术传统、来源权威性、文本完整性和语义清晰度等 metadata。
 - **章节级证据单元**：把原始章节转换为 `SourceUnit`，仅保存证据和质量权重，不在该层做诊断判断。
-- **llmlite 架构**：`tcm_fuzzywiki.llmlite.ChatModel` 是极简 LLM 协议；内置 Azure ChatGPT 与 OpenAI-compatible（MiniMax-M3 等）REST 适配器，也提供离线 deterministic extractor 便于测试与冷启动。
+- **llmlite 架构**：`tcm_fuzzywiki.llmlite.ChatModel` 是极简 LLM 协议；内置 Azure ChatGPT 与 OpenAI-compatible（MiniMax-M3 等）REST 适配器（两者共用同一套鲁棒 JSON 解析与重试），`tcm_fuzzywiki.extraction` 另提供离线 deterministic extractor 便于测试与冷启动。所有 LLM 抽取路径共用同一行级校验（feature 白名单、空值过滤、置信度 clamp）。
 - **断点续跑 LLM 构建**：`tcm-fuzzywiki build-llm` 提供 chunk 级 checkpoint 的可中断抽取——崩溃/限流/Colab 断线后重跑同一命令，只补抽失败的 chunk（含 partial 来源），并校验输入 SHA256 防止 checkpoint 错配；observation ID 按输入顺序确定性分配，与线程完成顺序无关。
 - **任意表格规范化**：`tcm-fuzzywiki normalize-input` 把任意中英文列名的章节 XLSX/CSV 映射为推荐字段，自动猜测正文列、填充默认 metadata，并输出可审计的列映射 JSON 报告。
 - **Observation-first 抽取**：LLM 只允许返回 `feature / feature_value / evidence_text / extraction_confidence`，禁止直接输出证候、病机或诊断。
-- **Observation 标准化与未映射日志**：通过 `observation_mapping` 映射标准 observation，并把高置信未覆盖项写入 `unmapped_observations.log`。
+- **Observation 标准化与未映射日志**：通过 `observation_mapping` 映射标准 observation，并把全部未覆盖项写入 `unmapped_observations.log`——高置信项标 `needs_review`、低置信项标 `low_confidence_unmapped`；`mapping_policy.log_unmapped: false` 可关闭该日志。
 - **Bootstrap prior 词表、专家校准与 LLM 分角色打分**：配置中每个语言变量带 `status`、`icc` 和 `review_status`；`tcm-fuzzywiki calibrate` 可汇总专家 membership CSV，`tcm-fuzzywiki roleplay-score` 可让现代循证医学专家/中医专家/古文字专家三个 LLM 角色自动打分并生成 calibrated YAML。
 - **交叠积分隶属度**：当某 linguistic value 配置了 `linguistic_set` 且目标 fuzzy variable 存在对应 fuzzy set 时，使用 `∫ μ_linguistic(x)·μ_target(x) dx / ∫ μ_linguistic(x) dx`（trapezoidal 数值积分），`memberships.csv` 的 `calculation_mode` 记为 `overlap_integral`；若未配置 `linguistic_set`，则回退到配置中的 bootstrap `prior_membership` 常量先验，并把 `calculation_mode` 如实记为 `prior_membership`，避免把常量先验误标为积分结果。
 - **低 ICC 不确定性传播**：当 `icc < 0.75` 时进行 Monte Carlo 采样，输出 `p5 / p95 / uncertainty_width`；点估计 `membership` 仍保持确定性计算值（积分或先验），不会被采样均值覆盖，且按映射独立 seed，保证相同映射在不同运行/顺序下可复现。
 - **Observation 共现模式挖掘**：生成章节 itemset、support、confidence、lift、PMI、Jaccard、source diversity、tradition entropy、来源列表与代表证据。
 - **规则生命周期入口**：输出 `candidate_patterns.csv` 与 `expert_rule_review.csv`，用于专家把候选共现模式升格为正式规则。
 - **Larsen-style weighted activation**：规则激活公式为 `α = rule_weight × ∏ μ_i ^ w_i`，且前件统一读取 fuzzy variable membership。
-- **三层聚合**：章节内规则质量折扣加权均值、传统内来源质量加权均值、跨传统可配置 δ 折扣 noisy-or，并在聚合表中记录折扣参数。
+- **三层聚合（相关性折扣）**：章节内同一结论的多条规则在「质量加权均值（完全相关下界）」与「质量缩放 noisy-or（独立证据上界）」之间按 `n^{-γ}` 插值——γ=0 视共同激活的规则为独立证据，γ 越大越视为冗余；单规则时两端重合，γ 不影响结果。聚合表同时记录 `mu_weighted_mean`、`mu_noisy_or`、γ 与折扣因子。传统内为来源质量加权均值，跨传统为可配置 δ 折扣 noisy-or。
 - **Markdown Wiki**：自动生成 `index.md`、章节页、observation 页、entity/syndrome 页、candidate pattern 页、规则页、传统页、综合谱系页和 audit 页面。
 - **实现审计、完整性评估与复现 Manifest**：生成 `implementation_audit.csv`、`completion_assessment.csv`、`run_manifest.json` 及对应 Wiki 页，明确回答该次构建是 `formal_ready`、`research_ready_with_caveats` 还是 `not_ready`，并记录输入/config SHA256。
 - **关系网络导出**：生成 `relation_nodes.csv` 与 `relation_edges.csv`，表达 source→observation→fuzzy variable→rule→conclusion→global conclusion 的可审计网络。
 - **Mamdani 敏感性分析**：可选计算 consequent fuzzy set 截断、max 聚合与 centroid 去模糊结果，输出 `mamdani_results.csv` 和 Wiki 审计页。
-- **评估指标框架**：实现 FCR、CRP、MIC、SMB、FIA-local、FIA-chain 的公式与金标准 CSV 模板；无专家 gold 时输出 `needs_gold_standard`，有 gold 时直接计算。
+- **评估指标框架**：实现 FCR、CRP、MIC、SMB、FIA-local、FIA-chain 的公式与金标准 CSV 模板；无专家 gold 时 FCR/CRP/MIC/FIA 输出 `needs_gold_standard`，SMB 则退化为 `SMB-coverage-proxy`（status=`proxy`，即 modern_mapping 覆盖率），有 gold 时直接计算。
 - **完备性验证**：生成 `validation_report.csv` 和 `wiki/audit/validation_report.md`，并提供 `tcm-fuzzywiki doctor` 命令检查配置与输入 metadata 是否达到正式分析要求。
 
 ## 安装
@@ -43,22 +43,30 @@ python -m pip install -e '.[dev]'
 tcm-fuzzywiki run-demo --output build/demo
 ```
 
-Demo 输入位于 `examples/bootstrap_chapters.csv`，输出包括：
+Demo 输入位于 `examples/bootstrap_chapters.csv`（`run-demo` 会自动从安装来源的仓库位置解析该文件，可在任意工作目录运行），输出包括：
 
 ```text
 build/demo/
+  summary.txt
   data/
     source_units.csv
     source_metadata.csv
+    source_stratification.csv
     observations.csv
+    observation_mapping.csv
     memberships.csv
     observation_itemsets.csv
     cooccurrence_stats.csv
     candidate_patterns.csv
     expert_rule_review.csv
+    expert_calibration_template.csv
     rules.csv
+    rule_lifecycle.csv
     inference_results.csv
     aggregation_results.csv
+    entities.csv
+    fuzzy_sets.csv
+    ontology_lexicon.csv
     wiki_pages.csv
     relation_nodes.csv
     relation_edges.csv
@@ -67,6 +75,7 @@ build/demo/
     evaluation_gold_templates.csv
     validation_report.csv
     implementation_audit.csv
+    methodology_compliance.csv
     completion_assessment.csv
     run_manifest.json
     unmapped_observations.log
@@ -76,6 +85,10 @@ build/demo/
     observations/
     entities/
     syndromes/
+    mechanisms/      # 按 entity_type 路由的实体页；默认词表下为空目录
+    methods/         # 同上
+    formulas/        # 同上
+    herbs/           # 同上
     traditions/
     rules/
     patterns/
@@ -159,7 +172,7 @@ tcm-fuzzywiki build \
   --azure-llm
 ```
 
-Azure 模式下，LLM 仍然只能抽取 observation；证候隶属度、规则激活、聚合与 Wiki 结果由 deterministic pipeline 复算。
+Azure 模式下，LLM 仍然只能抽取 observation；证候隶属度、规则激活、聚合与 Wiki 结果由 deterministic pipeline 复算。Azure 适配器与 `build-llm` 的 OpenAI/Anthropic 适配器共用同一套鲁棒 JSON 解析（`<think>`/围栏剥离、尾逗号修复）与重试逻辑，抽取行也经过同一 feature 白名单校验。
 
 ## MiniMax-M3 / OpenAI / Anthropic / Azure LLM 与断点续跑构建
 
@@ -271,12 +284,12 @@ Colab 全流程即：挂载 Drive → `git clone` + `pip install -e .` → `norm
 
 ## 配置文件结构
 
-核心配置在 `configs/tcm_fuzzywiki.yaml`：
+核心配置在 `configs/tcm_fuzzywiki.yaml`（下列键均被 pipeline 真实读取；积分方法固定为 trapezoidal，不作为配置项）：
 
-- `membership_calculation`：默认 `overlap_integral`，配置 trapezoidal 积分点数。
-- `mapping_policy`：未映射 observation 日志与覆盖率阈值。
-- `uncertainty_propagation`：低 ICC Monte Carlo 参数。
-- `aggregation`：source 内规则折扣 gamma、跨传统默认 δ 与传统独立性权重。
+- `membership_calculation`：默认 `overlap_integral`，`numerical_integration.points` 为积分采样点数。
+- `mapping_policy`：`log_unmapped` 控制未映射日志开关，`trigger_review_if_confidence_above` 为高置信复核阈值，`coverage_warning_threshold` 为 validation 的覆盖率告警阈值。
+- `uncertainty_propagation`：低 ICC Monte Carlo 参数（`n_samples`、`icc_threshold`、`random_seed`）。
+- `aggregation`：`source_rule_discount_gamma`（章节内多规则相关性折扣：0=独立 noisy-or，越大越接近加权均值）、跨传统默认 δ 与传统独立性权重。
 - `candidate_pattern_filter`：support、lift、PMI、source_count、tradition_count 阈值。
 - `fuzzy_sets`：目标 fuzzy variables 与 fuzzy sets。
 - `observation_mapping`：古籍原文表达到标准 observation 的映射。
@@ -289,8 +302,9 @@ Colab 全流程即：挂载 Drive → `git clone` + `pip install -e .` → `norm
 
 本仓库现在会在每次构建时输出两类审计产物：
 
-- `data/implementation_audit.csv`：机器可读的能力状态表。
+- `data/implementation_audit.csv`：机器可读的能力状态表。该表是能力级声明（附本次运行统计），并非逐项运行时检测；其中「Low-ICC uncertainty propagation」按当前配置的专家校准状态动态判定——全部语言变量映射均为 `review_status: expert_reviewed` 时记为 `implemented`，否则保持 `implemented_mvp`。因此当构建使用专家校准配置、提供全部金标准且无 validation 警告时，`assess` 的 `formal_ready` 是可达的。
 - `wiki/audit/implementation_audit.md`：面向研究者/专家的 Markdown 审计说明。
+- `data/methodology_compliance.csv` 与 `wiki/audit/methodology_compliance.md`：V5 方法学各阶段（A-B 至 Evaluation）的合规矩阵与外部依赖边界。
 - `data/completion_assessment.csv`：对该次 build 是否 formal-ready 的机器可读 verdict。
 - `wiki/audit/completion_assessment.md`：对“是否完美实现/是否正式就绪”的 Markdown 解释。
 - `data/run_manifest.json`：记录输入、配置、可选规则/gold、执行模式、版本和 SHA256。
@@ -306,7 +320,7 @@ Colab 全流程即：挂载 Drive → `git clone` + `pip install -e .` → `norm
 | `implemented_mvp` | 已提供 MVP 或 bootstrap 工作流，但真实研究仍需要专家数据、外部本体或更多样本。 |
 | `future_work` | 当前暂无对应计算模块；本版本已尽量把 V5.0 计算项转成可运行模块。 |
 
-特别说明：Mamdani 敏感性推理与 FCR/CRP/MIC/SMB/FIA 公式已经实现；但 FCR、CRP、MIC、SMB、FIA-local、FIA-chain 的正式数值需要专家金标准 CSV。未提供 gold 时，系统输出 `needs_gold_standard` 与模板，不会凭空生成专家评估结论。
+特别说明：Mamdani 敏感性推理与 FCR/CRP/MIC/SMB/FIA 公式已经实现；但 FCR、CRP、MIC、SMB、FIA-local、FIA-chain 的正式数值需要专家金标准 CSV。未提供 gold 时，FCR/CRP/MIC/FIA 输出 `needs_gold_standard` 与模板，SMB 退化为如实标注的 `SMB-coverage-proxy`（status=`proxy`），系统不会凭空生成专家评估结论。
 
 ## 关系网络导出
 
@@ -366,7 +380,10 @@ tcm-fuzzywiki calibrate \
   --report build/calibration_report.csv
 ```
 
-校准会写入 `calibrated_membership`、专家均值、p5/p95、ICC/一致性 proxy、`expert_count` 和 `review_status: expert_reviewed`。低一致性条目标记为 `expert_calibrated_low_icc`，后续 membership 阶段会继续触发低 ICC 不确定性传播。
+校准会写入 `calibrated_membership`、专家均值、p5/p95、`expert_count` 和 `review_status: expert_reviewed`，并输出两级一致性度量：
+
+- **逐词条 `icc`（`icc_type: expert_agreement_proxy`）**：单个词条只是一个 item，真 ICC 在该粒度上无定义，因此使用离散度 proxy `1 - sd/0.5`；低一致性条目标记为 `expert_calibrated_low_icc`，后续 membership 阶段会继续触发低 ICC 不确定性传播。
+- **全表 `panel_icc`**：跨全部（term, variable, fuzzy_set）item × 专家的单向随机效应 ICC(1,1)，需要 ≥2 个完整 item 与 ≥2 名专家；用于报告专家小组整体信度。
 
 ## Mamdani 与评估指标
 
@@ -423,6 +440,9 @@ python -m pytest -q
 - LLM/离线分角色专家打分与 roleplay calibration 输出。
 - `completion_assessment` 对缺失 gold、MVP 边界和 validation warnings 的 verdict。
 - `run_manifest` 记录输入/config 哈希、执行模式和 summary，保证可复现实验审计。
+- 章节内多规则 γ 相关性折扣对 μ 的真实影响（γ=0 → noisy-or、γ→∞ → 加权均值、单规则不变）。
+- 校准 `panel_icc`（ICC(1,1)）与逐词条 agreement proxy 的行为与边界条件。
+- 实现审计低 ICC 项按专家校准状态的动态判定，以及 Azure 适配器的鲁棒 JSON 解析与统一行校验。
 
 ## 目录说明
 
@@ -439,12 +459,14 @@ tcm_fuzzywiki/
   io.py              # XLSX/CSV 输入与数据表输出
   llmlite.py         # 轻量 LLM 协议、Azure 与 OpenAI-compatible 适配器、鲁棒 JSON 解析
   membership.py      # 交叠积分与低 ICC Monte Carlo
+  methodology.py     # V5 方法学阶段合规矩阵
   normalize.py       # 任意章节表格规范化为推荐字段
   resume.py          # chunk 级断点续跑 LLM 抽取引擎
   mamdani.py         # Mamdani 敏感性分析
   evaluation.py      # FCR/CRP/MIC/SMB/FIA 指标框架
   models.py          # 核心数据模型
   pipeline.py        # 端到端 orchestration
+  provenance.py      # run_manifest 复现审计（输入/配置 SHA256）
   rules.py           # seed/expert rules 加载
   roleplay.py        # LLM 分角色专家自动打分
   network.py         # Fuzzy relation network CSV 导出

@@ -93,7 +93,9 @@ def run_pipeline(
     write_csv(data_dir / "mamdani_results.csv", mamdani_results)
     write_csv(data_dir / "aggregation_results.csv", aggregations)
     write_csv(data_dir / "wiki_pages.csv", wiki_pages)
-    write_text(data_dir / "unmapped_observations.log", unmapped_log(observations, config.get("mapping_policy", {}).get("trigger_review_if_confidence_above", 0.85)))
+    mapping_policy = config.get("mapping_policy", {}) or {}
+    if mapping_policy.get("log_unmapped", True):
+        write_text(data_dir / "unmapped_observations.log", unmapped_log(observations, float(mapping_policy.get("trigger_review_if_confidence_above", 0.85))))
     write_csv(data_dir / "cooccurrence_stats.csv", patterns)
     write_csv(data_dir / "expert_rule_review.csv", _expert_review_template(patterns))
     write_csv(data_dir / "entities.csv", entities)
@@ -127,10 +129,10 @@ def run_pipeline(
     write_text(validation_path, readiness_markdown(validation_rows))
     wiki_pages.append({"page_type": "audit", "page_path": str(validation_path)})
 
-    audit_rows = capability_rows(summary)
+    audit_rows = capability_rows(summary, config)
     write_csv(data_dir / "implementation_audit.csv", audit_rows)
     audit_path = wiki_dir / "audit" / "implementation_audit.md"
-    write_text(audit_path, capability_markdown(summary))
+    write_text(audit_path, capability_markdown(summary, config))
     wiki_pages.append({"page_type": "audit", "page_path": str(audit_path)})
     summary["wiki_page_count"] = len(wiki_pages)
     write_csv(data_dir / "wiki_pages.csv", wiki_pages)

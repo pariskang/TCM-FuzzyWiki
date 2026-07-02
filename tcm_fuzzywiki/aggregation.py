@@ -32,10 +32,24 @@ def aggregate(
     source_rows: list[dict[str, Any]] = []
     for (source_id, conclusion), rows in by_source_conclusion.items():
         n = len(rows)
+        qualities = [rule_quality.get(row.rule_id, 0.5) for row in rows]
+        denom = sum(qualities) or 1.0
+        mu_weighted_mean = sum(quality * row.activation for quality, row in zip(qualities, rows)) / denom
+        # Quality-scaled noisy-or is the independent-evidence ceiling: the
+        # best-quality rule contributes its full activation, lower-quality rules
+        # contribute proportionally less, so n == 1 keeps mu == activation.
+        max_quality = max(qualities) or 1.0
+        complement = 1.0
+        for quality, row in zip(qualities, rows):
+            complement *= 1.0 - min(1.0, max(0.0, (quality / max_quality) * row.activation))
+        mu_noisy_or = 1.0 - complement
+        # Correlation discount: gamma = 0 treats co-fired rules as independent
+        # evidence (noisy-or); larger gamma treats them as increasingly redundant
+        # and pulls mu back toward the quality-weighted mean, the fully-correlated
+        # floor.  Both ends coincide for a single rule, so the discount only
+        # affects genuinely multi-rule evidence.
         discount_factor = 1.0 / math.pow(n, gamma)
-        weights = [rule_quality.get(row.rule_id, 0.5) * discount_factor for row in rows]
-        denom = sum(weights) or 1.0
-        mu = sum(weight * row.activation for weight, row in zip(weights, rows)) / denom
+        mu = max(0.0, min(1.0, mu_weighted_mean + discount_factor * (mu_noisy_or - mu_weighted_mean)))
         source = source_meta[source_id]
         source_rows.append(
             {
@@ -44,11 +58,13 @@ def aggregate(
                 "tradition_id": source.tradition_id,
                 "consequent_entity": conclusion,
                 "mu": round(mu, 6),
+                "mu_weighted_mean": round(mu_weighted_mean, 6),
+                "mu_noisy_or": round(mu_noisy_or, 6),
                 "evidence_count": n,
                 "quality_weight": round(source.evidence_quality.score, 6),
                 "rule_discount_gamma": gamma,
                 "rule_discount_factor": round(discount_factor, 6),
-                "effective_rule_weight_sum": round(sum(weights), 6),
+                "effective_rule_weight_sum": round(sum(qualities) * discount_factor, 6),
             }
         )
 

@@ -33,7 +33,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from .extraction import FEATURE_HINTS, SYSTEM_PROMPT, ObservationNormalizer
+from .extraction import (
+    ALLOWED_FEATURES,
+    FEATURE_HINTS,
+    SYSTEM_PROMPT,
+    ObservationNormalizer,
+    coerce_observation_rows,
+)
 from .io import write_csv, write_text
 from .llmlite import ChatModel
 from .models import Observation, SourceUnit, clamp01
@@ -41,30 +47,6 @@ from .models import Observation, SourceUnit, clamp01
 EXTRACTION_DIRNAME = "extraction"
 CHUNKS_FILENAME = "extraction_chunks.jsonl"
 MANIFEST_FILENAME = "extraction_manifest.json"
-
-ALLOWED_FEATURES = {
-    "symptom",
-    "sign",
-    "tongue",
-    "pulse",
-    "body_part",
-    "pathogen",
-    "trigger",
-    "relieving_factor",
-    "aggravating_factor",
-    "duration",
-    "severity",
-    "pain_location",
-    "pain_quality",
-    "disease_course",
-    "formula",
-    "herb",
-    "acupoint",
-    "method",
-    "mechanism",
-    "other",
-}
-
 
 def _now_iso() -> str:
     return _dt.datetime.now().isoformat(timespec="seconds")
@@ -174,33 +156,6 @@ def build_chunk_prompt(
         f"当前分块: {chunk_index}/{chunk_total}\n"
         f"原文片段:\n{chunk_text}\n"
     )
-
-
-def coerce_observation_rows(payload: Any, max_rows: int = 0) -> list[dict[str, Any]]:
-    rows = payload.get("observations", []) if isinstance(payload, dict) else []
-    if not isinstance(rows, list):
-        return []
-    out: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        feature = str(row.get("feature", "symptom")).strip() or "symptom"
-        if feature not in ALLOWED_FEATURES:
-            feature = "other"
-        feature_value = str(row.get("feature_value", "")).strip()
-        if not feature_value:
-            continue
-        out.append(
-            {
-                "feature": feature,
-                "feature_value": feature_value,
-                "evidence_text": str(row.get("evidence_text", "")).strip(),
-                "extraction_confidence": clamp01(row.get("extraction_confidence", 0.5), 0.5),
-            }
-        )
-        if max_rows > 0 and len(out) >= max_rows:
-            break
-    return out
 
 
 class _CheckpointWriter:

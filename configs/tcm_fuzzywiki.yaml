@@ -1,8 +1,7 @@
+# 隶属度计算：overlap_integral 使用 trapezoidal 数值积分（方法固定），points 为采样点数
 membership_calculation:
   default_mode: overlap_integral
-  optional_modes: [three_point_mean, centroid_sampling]
   numerical_integration:
-    method: trapezoidal
     points: 200
 
 
@@ -19,13 +18,10 @@ mapping_policy:
   trigger_review_if_confidence_above: 0.85
   coverage_warning_threshold: 0.70
 
+# 低 ICC 不确定性传播：仅当映射的 icc < icc_threshold 时做 Monte Carlo 采样
 uncertainty_propagation:
-  mode: montecarlo
   n_samples: 200
-  n_samples_formal: 1000
-  apply_to: low_icc_only
   icc_threshold: 0.75
-  vectorized: true
   random_seed: 20260531
 
 

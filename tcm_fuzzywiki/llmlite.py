@@ -49,10 +49,17 @@ class AzureChatGPTConfig:
 
 
 class AzureChatGPTLLM:
-    """Minimal Azure Chat Completions client using the llmlite interface."""
+    """Minimal Azure Chat Completions client using the llmlite interface.
 
-    def __init__(self, config: AzureChatGPTConfig):
+    Uses the same robust payload parsing and retry behaviour as the
+    OpenAI-compatible adapter, so `build --azure-llm` and `roleplay-score
+    --azure-llm` tolerate fenced/verbose JSON and transient API failures.
+    """
+
+    def __init__(self, config: AzureChatGPTConfig, max_retries: int = 3, retry_sleep: float = 2.0):
         self.config = config
+        self.max_retries = max(1, int(max_retries))
+        self.retry_sleep = float(retry_sleep)
 
     def complete_json(self, system_prompt: str, user_prompt: str) -> object:
         url = (
@@ -68,19 +75,36 @@ class AzureChatGPTLLM:
             "max_tokens": self.config.max_tokens,
             "response_format": {"type": "json_object"},
         }
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"api-key": self.config.api_key, "content-type": "application/json"},
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as exc:
-            raise RuntimeError(f"Azure ChatGPT API request failed: {exc}") from exc
-        content = data["choices"][0]["message"]["content"]
-        return json.loads(content)
+        last_error: Exception | None = None
+        for attempt in range(1, self.max_retries + 1):
+            request = urllib.request.Request(
+                url,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"api-key": self.config.api_key, "content-type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                content = data["choices"][0]["message"]["content"]
+                return parse_json_payload(content)
+            except urllib.error.HTTPError as exc:
+                body = ""
+                try:
+                    body = exc.read().decode("utf-8", errors="replace")
+                except Exception:
+                    pass
+                if exc.code in (400, 422) and "response_format" in body and "response_format" in payload:
+                    payload.pop("response_format")
+                    continue
+                last_error = RuntimeError(f"Azure ChatGPT API request failed (HTTP {exc.code}): {body[:300]}")
+                if exc.code != 429 and exc.code < 500:
+                    raise last_error from exc
+            except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+                last_error = RuntimeError(f"Azure ChatGPT API request failed: {exc}")
+            if attempt < self.max_retries:
+                time.sleep(self.retry_sleep * attempt)
+        raise last_error or RuntimeError("Azure ChatGPT API request failed")
 
 
 class NullLLM:

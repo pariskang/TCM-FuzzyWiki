@@ -48,9 +48,18 @@ def validate_build(
     summary: dict[str, Any],
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
+    mapping_policy = config.get("mapping_policy", {}) or {}
     findings.extend(validate_config(config))
     findings.extend(validate_sources(sources))
-    findings.extend(validate_observation_coverage(observations, memberships, summary))
+    findings.extend(
+        validate_observation_coverage(
+            observations,
+            memberships,
+            summary,
+            coverage_threshold=float(mapping_policy.get("coverage_warning_threshold", 0.70)),
+            review_confidence=float(mapping_policy.get("trigger_review_if_confidence_above", 0.85)),
+        )
+    )
     findings.extend(validate_cooccurrence_readiness(summary))
     findings.extend(validate_rules(rules))
     findings.extend(validate_evaluation_readiness(evaluation_rows))
@@ -108,14 +117,18 @@ def validate_sources(sources: list[SourceUnit]) -> list[dict[str, Any]]:
 
 
 def validate_observation_coverage(
-    observations: list[Observation], memberships: list[Membership], summary: dict[str, Any]
+    observations: list[Observation],
+    memberships: list[Membership],
+    summary: dict[str, Any],
+    coverage_threshold: float = 0.70,
+    review_confidence: float = 0.85,
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     if not observations:
         return [_finding("observation", "all", "error", "no_observations", "No observations were extracted.")]
     mapped = len({membership.observation_id for membership in memberships})
     coverage = mapped / len(observations)
-    threshold = 0.70
+    threshold = coverage_threshold
     if coverage < threshold:
         findings.append(
             _finding(
@@ -126,7 +139,7 @@ def validate_observation_coverage(
                 f"Membership coverage {coverage:.3f} is below exploratory threshold {threshold:.2f}.",
             )
         )
-    unmapped_high_conf = [obs for obs in observations if obs.mapping_status != "mapped" and obs.extraction_confidence >= 0.85]
+    unmapped_high_conf = [obs for obs in observations if obs.mapping_status != "mapped" and obs.extraction_confidence >= review_confidence]
     for obs in unmapped_high_conf[:20]:
         findings.append(
             _finding(
